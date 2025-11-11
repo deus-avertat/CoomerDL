@@ -34,6 +34,118 @@ from app.donors import DonorsModal
 VERSION = "V0.8.17"
 MAX_LOG_LINES = None
 
+class PostSelectionDialog(ctk.CTkToplevel):
+    def __init__(self, parent, posts, tr, user_id, service, site):
+        super().__init__(parent)
+        self.title(tr("Select posts"))
+        self.geometry("540x600")
+        self.transient(parent)
+        self.grab_set()
+        self.protocol("WM_DELETE_WINDOW", self.on_cancel)
+
+        self._tr = tr
+        self._checkbox_vars = {}
+        self._confirmed = False
+        self._result = []
+
+        header_text = tr(
+            "{count} posts found for {service} / {user} on {site}",
+            count=len(posts),
+            service=service,
+            user=user_id,
+            site=site,
+        )
+        header_label = ctk.CTkLabel(self, text=header_text, wraplength=500, justify="left")
+        header_label.pack(padx=20, pady=(20, 10), anchor="w")
+
+        self.scrollable = ctk.CTkScrollableFrame(self)
+        self.scrollable.pack(fill="both", expand=True, padx=20, pady=(0, 10))
+
+        for post in posts:
+            post_id = post.get("id", "")
+            title = post.get("title") or tr("Untitled")
+            published = post.get("published") or ""
+            if isinstance(published, str) and published:
+                published_display = published.replace("T", " ")
+            else:
+                published_display = ""
+
+            display_text = f"{title} (ID: {post_id})"
+            if published_display:
+                display_text += f"\n{tr('Published')}: {published_display}"
+
+            var = tk.BooleanVar(value=True)
+            checkbox = ctk.CTkCheckBox(
+                self.scrollable,
+                text=display_text,
+                variable=var,
+                onvalue=True,
+                offvalue=False,
+                width=480,
+            )
+            checkbox.pack(fill="x", padx=5, pady=5, anchor="w")
+            self._checkbox_vars[post_id] = var
+
+        controls_frame = ctk.CTkFrame(self)
+        controls_frame.pack(fill="x", padx=20, pady=(0, 10))
+
+        select_all_button = ctk.CTkButton(
+            controls_frame,
+            text=tr("Select all"),
+            command=self.select_all,
+        )
+        select_all_button.pack(side="left", padx=(0, 10))
+
+        deselect_all_button = ctk.CTkButton(
+            controls_frame,
+            text=tr("Deselect all"),
+            command=self.deselect_all,
+        )
+        deselect_all_button.pack(side="left")
+
+        buttons_frame = ctk.CTkFrame(self, fg_color="transparent")
+        buttons_frame.pack(fill="x", padx=20, pady=(0, 20))
+
+        cancel_button = ctk.CTkButton(
+            buttons_frame,
+            text=tr("Cancel"),
+            command=self.on_cancel,
+        )
+        cancel_button.pack(side="right", padx=(10, 0))
+
+        confirm_button = ctk.CTkButton(
+            buttons_frame,
+            text=tr("Confirm"),
+            command=self.on_confirm,
+        )
+        confirm_button.pack(side="right")
+
+    def select_all(self):
+        for var in self._checkbox_vars.values():
+            var.set(True)
+
+    def deselect_all(self):
+        for var in self._checkbox_vars.values():
+            var.set(False)
+
+    def on_confirm(self):
+        selected = [post_id for post_id, var in self._checkbox_vars.items() if var.get()]
+        if not selected:
+            messagebox.showwarning(self._tr("Aviso"), self._tr("Select at least one post to continue."))
+            return
+        self._confirmed = True
+        self._result = selected
+        self.destroy()
+
+    def on_cancel(self):
+        self._confirmed = False
+        self._result = []
+        self.destroy()
+
+    def show(self):
+        self.wait_window()
+        return self._confirmed, self._result
+
 def extract_ck_parameters(url: ParseResult) -> tuple[Optional[str], Optional[str], Optional[str]]:
     """
     Get the service, user and post id from the url if they exist
@@ -723,6 +835,68 @@ class ImageDownloaderApp(ctk.CTk):
             self.enable_widgets()
             self.export_logs()
 
+    def perform_ck_preflight(self, site, service, user, post_id, query, initial_offset):
+        try:
+            if post_id is not None:
+                posts = self.general_downloader.fetch_user_posts(
+                    site,
+                    user,
+                    service,
+                    specific_post_id=post_id,
+                    log_fetching=False,
+                )
+                if not posts:
+                    messagebox.showwarning(
+                        self.tr("Error"),
+                        self.tr("No information was found for the requested post.")
+                    )
+                    return None
+                post_info = posts[0]
+                title = post_info.get('title') or self.tr("Untitled")
+                attachments = post_info.get("attachments") or []
+                main_file = post_info.get("file")
+                attachments_count = len(attachments) + (1 if main_file else 0)
+                message = self.tr(
+                    "Service: {service}\nUser: {user}\nPost: {title} (ID: {post_id})\nAttachments: {count}\nDo you want to continue?",
+                    service=service,
+                    user=user,
+                    title=title,
+                    post_id=post_id,
+                    count=attachments_count,
+                )
+                if not messagebox.askyesno(self.tr("Confirm Download"), message):
+                    return None
+                return {"selected_posts": [post_id], "total_posts": 1}
+
+            posts = self.general_downloader.fetch_user_posts(
+                site,
+                user,
+                service,
+                query=query,
+                initial_offset=initial_offset,
+                log_fetching=False,
+            )
+            if not posts:
+                messagebox.showerror(
+                    self.tr("Error"),
+                    self.tr("No posts were found for this user."),
+                )
+                return None
+
+            selection_dialog = PostSelectionDialog(self, posts, self.tr, user, service, site)
+            confirmed, selected_posts = selection_dialog.show()
+            if not confirmed:
+                return None
+            if len(selected_posts) == len(posts):
+                selected_payload = None
+            else:
+                selected_payload = selected_posts
+            return {"selected_posts": selected_payload, "total_posts": len(posts)}
+        except Exception as exc:
+            self.add_log_message_safe(self.tr("Error in previous verification: {error}", error=str(exc)))
+            messagebox.showerror(self.tr("Error"), str(exc))
+            return None
+
     # Download management
     def start_download(self):
         url = self.url_entry.get().strip()
@@ -784,13 +958,36 @@ class ImageDownloaderApp(ctk.CTk):
 
             self.add_log_message_safe(self.tr("Servicio extraído: {service} del sitio: {site}", service=service, site=site))
 
+            query, offset = extract_ck_query(parsed_url)
+            preflight_data = self.perform_ck_preflight(site, service, user, post, query, offset)
+            if not preflight_data:
+                self.download_button.configure(state="normal")
+                self.cancel_button.configure(state="disabled")
+                self.active_downloader = None
+                return
+
             if post is not None:
                 self.add_log_message_safe(self.tr("Descargando post único..."))
                 download_thread = threading.Thread(target=self.wrapped_download, args=(self.start_ck_post_download, site, service, user, post))
             else:
-                query, offset = extract_ck_query(parsed_url)
                 self.add_log_message_safe(self.tr("Descargando todo el contenido del usuario..."))
-                download_thread = threading.Thread(target=self.wrapped_download, args=(self.start_ck_profile_download, site, service, user, query, download_all, offset))
+
+                selected_posts = preflight_data.get("selected_posts")
+                total_posts = preflight_data.get("total_posts", 0)
+                download_all = selected_posts is None or len(selected_posts) == total_posts
+                download_thread = threading.Thread(
+                    target=self.wrapped_download,
+                    args=(
+                        self.start_ck_profile_download,
+                        site,
+                        service,
+                        user,
+                        query,
+                        download_all,
+                        offset,
+                        selected_posts,
+                    ),
+                )
         
         elif "simpcity.su" in url:
             self.add_log_message_safe(self.tr("Descargando SimpCity"))
@@ -814,8 +1011,16 @@ class ImageDownloaderApp(ctk.CTk):
 
         download_thread.start()
 
-    def start_ck_profile_download(self, site, service, user, query, download_all, initial_offset):
-        download_info = self.active_downloader.download_media(site, user, service, query=query, download_all=download_all, initial_offset=initial_offset)
+    def start_ck_profile_download(self, site, service, user, query, download_all, initial_offset, selected_posts):
+        download_info = self.active_downloader.download_media(
+            site,
+            user,
+            service,
+            query=query,
+            download_all=download_all,
+            initial_offset=initial_offset,
+            selected_post_ids=selected_posts,
+        )
         if download_info:
             self.add_log_message_safe(f"Download info: {download_info}")
         # Llamar a export_logs al finalizar la descarga

@@ -570,21 +570,28 @@ class Downloader:
 			self.log(self.tr(f"Error getting size for {filename}: {e}"))
 			return media_url, filename, None
 
-	def download_media(self, site, user_id, service, query=None, download_all=False, initial_offset=0):
+	def download_media(self, site, user_id, service, query=None, download_all=False, initial_offset=0, selected_post_ids=None):
 		try:
 			self.log(self.tr("Starting download process..."))
 
+			log_fetching = download_all or bool(selected_post_ids)
 			posts = self.fetch_user_posts(
 				site, user_id, service,
 				query=query,
 				initial_offset=initial_offset,
-				log_fetching=download_all
+				log_fetching=log_fetching
 			)
 			if not posts:
 				self.log(self.tr("No posts found for this user."))
 				return
 
-			if not download_all:
+			if selected_post_ids is not None:
+				selected_set = set(selected_post_ids)
+				posts = [post for post in posts if post.get('id') in selected_set]
+				if not posts:
+					self.log(self.tr("No valid posts were selected for download."))
+					return
+			elif not download_all:
 				
 				posts = posts[:50]
 
