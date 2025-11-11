@@ -7,6 +7,14 @@
         "ru": "Выберите этот вариант, чтобы скачать весь доступный контент профиля,\nвместо только постов по указанному URL.",
         "zh": "选择此选项以下载个人资料中的所有可用内容，\n而不仅仅是提供的URL中的帖子。"
     },
+    "Preflight Post Selection": {
+        "es": "Habilitar selección previa de publicaciones",
+        "en": "Preflight Post Selection",
+        "fr": "Activer la sélection préalable des publications",
+        "ja": "事前投稿選択を有効にする",
+        "ru": "Включить предварительный выбор постов",
+        "zh": "启用预检帖子选择"
+    },
     "Descarga cancelada por el usuario.": {
         "es": "Descarga cancelada por el usuario.",
         "en": "Download canceled by the user.",

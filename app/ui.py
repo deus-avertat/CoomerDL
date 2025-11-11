@@ -416,6 +416,13 @@ class ImageDownloaderApp(ctk.CTk):
         self.cancel_button = ctk.CTkButton(self.action_frame, text=self.tr("Cancelar Descarga"), state="disabled", command=self.cancel_download)
         self.cancel_button.pack(side='left', padx=10)
 
+        self.enable_preflight_check = ctk.CTkCheckBox(
+            self.action_frame,
+            text=self.tr("Preflight Post Selection")
+        )
+        self.enable_preflight_check.pack(side='right', padx=10)
+        self.enable_preflight_check.select()
+
         self.progress_label = ctk.CTkLabel(self.action_frame, text="")
         self.progress_label.pack(side='left', padx=10)
 
@@ -507,6 +514,7 @@ class ImageDownloaderApp(ctk.CTk):
         self.download_compressed_check.configure(text=self.tr("Descargar Comprimidos"))
         self.download_button.configure(text=self.tr("Descargar"))
         self.cancel_button.configure(text=self.tr("Cancelar Descarga"))
+        self.enable_preflight_check.configure(text=self.tr("Preflight Post Selection"))
         # self.processing_label.configure(text=self.tr("Procesando videos..."))
         self.title(self.tr(f"Downloader [{VERSION}]"))
         self.update_download_button.configure(text=self.tr("Download Now"))
@@ -959,22 +967,27 @@ class ImageDownloaderApp(ctk.CTk):
             self.add_log_message_safe(self.tr("Servicio extraído: {service} del sitio: {site}", service=service, site=site))
 
             query, offset = extract_ck_query(parsed_url)
-            preflight_data = self.perform_ck_preflight(site, service, user, post, query, offset)
-            if not preflight_data:
-                self.download_button.configure(state="normal")
-                self.cancel_button.configure(state="disabled")
-                self.active_downloader = None
-                return
+            preflight_enabled = bool(self.enable_preflight_check.get())
+            preflight_data = None
+            selected_posts = None
+            download_all = True
+            if preflight_enabled:
+                preflight_data = self.perform_ck_preflight(site, service, user, post, query, offset)
+                if not preflight_data:
+                    self.download_button.configure(state="normal")
+                    self.cancel_button.configure(state="disabled")
+                    self.active_downloader = None
+                    return
+                selected_posts = preflight_data.get("selected_posts")
+                total_posts = preflight_data.get("total_posts", 0)
+                download_all = selected_posts is None or len(selected_posts) == total_posts
 
             if post is not None:
                 self.add_log_message_safe(self.tr("Descargando post único..."))
                 download_thread = threading.Thread(target=self.wrapped_download, args=(self.start_ck_post_download, site, service, user, post))
             else:
                 self.add_log_message_safe(self.tr("Descargando todo el contenido del usuario..."))
-
-                selected_posts = preflight_data.get("selected_posts")
-                total_posts = preflight_data.get("total_posts", 0)
-                download_all = selected_posts is None or len(selected_posts) == total_posts
+                total_posts = preflight_data.get("total_posts", 0) if preflight_data else 0
                 download_thread = threading.Thread(
                     target=self.wrapped_download,
                     args=(
