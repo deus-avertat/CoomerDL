@@ -307,9 +307,21 @@ class ImageDownloaderApp(ctk.CTk):
         self.progress_label = ctk.CTkLabel(self.action_frame, text="")
         self.progress_label.pack(side='left', padx=10)
 
-        self.log_textbox = ctk.CTkTextbox(self, width=590, height=200)
-        self.log_textbox.pack(pady=(10, 0), padx=20, fill='both', expand=True)
-        self.log_textbox.configure(state="disabled")
+        # self.log_textbox = ctk.CTkTextbox(self, width=590, height=200)
+        # self.log_textbox.pack(pady=(10, 0), padx=20, fill='both', expand=True)
+        # self.log_textbox.configure(state="disabled")
+
+        # Log Textbox
+        self.log_frame = ctk.CTkFrame(self)
+        self.log_frame.pack(pady=(10, 0), padx=20, fill='both', expand=True)
+
+        self.log_textbox = ctk.CTkTextbox(self.log_frame, width=590, height=200, activate_scrollbars=False)
+        self.log_textbox.pack(side='left', fill='both', expand=True)
+
+        self.log_scrollbar = ctk.CTkScrollbar(self.log_frame, command=self.log_textbox.yview)
+        self.log_scrollbar.pack(side='right', fill='y')
+
+        self.log_textbox.configure(state="disabled", yscrollcommand=self.log_scrollbar.set)
 
         # Progress frame
         self.progress_frame = ctk.CTkFrame(self)
@@ -868,8 +880,9 @@ class ImageDownloaderApp(ctk.CTk):
             if hasattr(self, "log_textbox") and self.log_textbox:
                 self.log_textbox.configure(state="normal")
                 self.log_textbox.insert("end", message + "\n")
-                self.log_textbox.configure(state="disabled")
+                # self.log_textbox.configure(state="disabled")
                 self.log_textbox.see("end")
+                self.log_textbox.configure(state="disabled")
             else:
                 # aún no existe el textbox; guardamos
                 if not hasattr(self, "_log_buffer") or self._log_buffer is None:
@@ -1148,8 +1161,10 @@ class ImageDownloaderApp(ctk.CTk):
         self.options_frame.pack(pady=10, fill='x', padx=20)
         self.action_frame.pack_forget()
         self.action_frame.pack(pady=10, fill='x', padx=20)
-        self.log_textbox.pack_forget()
-        self.log_textbox.pack(pady=(10, 0), padx=20, fill='both', expand=True)
+        # self.log_textbox.pack_forget()
+        # self.log_textbox.pack(pady=(10, 0), padx=20, fill='both', expand=True)
+        self.log_frame.pack_forget()
+        self.log_frame.pack(pady=(10, 0), padx=20, fill='both', expand=True)
         self.progress_frame.pack_forget()
         self.progress_frame.pack(pady=(0, 10), fill='x', padx=20)
 
