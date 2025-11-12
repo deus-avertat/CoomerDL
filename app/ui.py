@@ -411,10 +411,16 @@ class ImageDownloaderApp(ctk.CTk):
         self.action_frame.pack(pady=10, fill='x', padx=20)
 
         self.download_button = ctk.CTkButton(self.action_frame, text=self.tr("Descargar"), command=self.start_download)
-        self.download_button.pack(side='left', padx=10)
+        self.download_button.pack(side='left', padx=5)
+
+        self.pause_button = ctk.CTkButton(self.action_frame, width=16, height=28, text=self.tr("⏸"), state="disabled", command=self.pause_download)
+        self.pause_button.pack(side='left', padx=5)
+
+        self.resume_button = ctk.CTkButton(self.action_frame, width=16, height=28, text=self.tr("▶"), state="disabled", command=self.resume_download)
+        self.resume_button.pack(side='left', padx=5)
 
         self.cancel_button = ctk.CTkButton(self.action_frame, text=self.tr("Cancelar Descarga"), state="disabled", command=self.cancel_download)
-        self.cancel_button.pack(side='left', padx=10)
+        self.cancel_button.pack(side='left', padx=5)
 
         self.enable_preflight_check = ctk.CTkCheckBox(
             self.action_frame,
@@ -513,6 +519,8 @@ class ImageDownloaderApp(ctk.CTk):
         self.download_videos_check.configure(text=self.tr("Descargar Vídeos"))
         self.download_compressed_check.configure(text=self.tr("Descargar Comprimidos"))
         self.download_button.configure(text=self.tr("Descargar"))
+        self.pause_button.configure(text=self.tr("⏸"))
+        self.resume_button.configure(text=self.tr("▶"))
         self.cancel_button.configure(text=self.tr("Cancelar Descarga"))
         self.enable_preflight_check.configure(text=self.tr("Preflight Post Selection"))
         # self.processing_label.configure(text=self.tr("Procesando videos..."))
@@ -910,10 +918,13 @@ class ImageDownloaderApp(ctk.CTk):
         url = self.url_entry.get().strip()
         if not hasattr(self, 'download_folder') or not self.download_folder:
             messagebox.showerror(self.tr("Error"), self.tr("Por favor, selecciona una carpeta de descarga."))
+            self.reset_pause_controls()
             return
 
         self.download_button.configure(state="disabled")
         self.cancel_button.configure(state="normal")
+        self.pause_button.configure(state="normal")
+        self.resume_button.configure(state="disabled")
         self.download_start_time = datetime.datetime.now()
         self.errors = []
         download_all = True
@@ -962,6 +973,7 @@ class ImageDownloaderApp(ctk.CTk):
                 self.add_log_message_safe(self.tr("URL no válida"))
                 self.download_button.configure(state="normal")
                 self.cancel_button.configure(state="disabled")
+                self.reset_pause_controls()
                 return
 
             self.add_log_message_safe(self.tr("Servicio extraído: {service} del sitio: {site}", service=service, site=site))
@@ -977,6 +989,7 @@ class ImageDownloaderApp(ctk.CTk):
                     self.download_button.configure(state="normal")
                     self.cancel_button.configure(state="disabled")
                     self.active_downloader = None
+                    self.reset_pause_controls()
                     return
                 selected_posts = preflight_data.get("selected_posts")
                 total_posts = preflight_data.get("total_posts", 0)
@@ -1020,6 +1033,7 @@ class ImageDownloaderApp(ctk.CTk):
             self.add_log_message_safe(self.tr("URL no válida"))
             self.download_button.configure(state="normal")
             self.cancel_button.configure(state="disabled")
+            self.reset_pause_controls()
             return
 
         download_thread.start()
@@ -1080,7 +1094,38 @@ class ImageDownloaderApp(ctk.CTk):
             self.clear_progress_bars()
         else:
             self.add_log_message_safe(self.tr("No hay una descarga en curso para cancelar."))
+        self.reset_pause_controls()
         self.enable_widgets()
+
+    def pause_download(self):
+        if not self.active_downloader:
+            self.add_log_message_safe(self.tr("There is no active download to pause."))
+            return
+        if hasattr(self.active_downloader, "request_pause"):
+            self.active_downloader.request_pause()
+            if getattr(self.active_downloader, "is_paused", False):
+                self.pause_button.configure(state="disabled")
+                self.resume_button.configure(state="normal")
+                self.add_log_message_safe(self.tr("Download paused."))
+            else:
+                self.add_log_message_safe(self.tr("The current download could not be paused."))
+        else:
+            self.add_log_message_safe(self.tr("The current download does not support pausing."))
+
+    def resume_download(self):
+        if not self.active_downloader:
+            self.add_log_message_safe(self.tr("There is no active download to resume."))
+            return
+        if hasattr(self.active_downloader, "request_resume"):
+            self.active_downloader.request_resume()
+            if not getattr(self.active_downloader, "is_paused", False):
+                self.pause_button.configure(state="normal")
+                self.resume_button.configure(state="disabled")
+                self.add_log_message_safe(self.tr("Download resumed."))
+            else:
+                self.add_log_message_safe(self.tr("The current download could not be resumed."))
+        else:
+            self.add_log_message_safe(self.tr("The current download cannot be resumed."))
 
     def clear_progress_bars(self):
         for file_id in list(self.progress_bars.keys()):
@@ -1229,6 +1274,11 @@ class ImageDownloaderApp(ctk.CTk):
     def enable_widgets(self):
         self.update_queue.put(lambda: self.download_button.configure(state="normal"))
         self.update_queue.put(lambda: self.cancel_button.configure(state="disabled"))
+        self.update_queue.put(self.reset_pause_controls)
+
+    def reset_pause_controls(self):
+        self.pause_button.configure(state="disabled")
+        self.resume_button.configure(state="disabled")
     
     # Save and load download folder
     def save_download_folder(self, folder_path):

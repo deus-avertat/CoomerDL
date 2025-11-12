@@ -4,6 +4,7 @@ import requests
 import os
 import time
 import datetime
+import threading
 
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, quote
@@ -27,7 +28,11 @@ class EromeDownloader:
         self.update_global_progress_callback = update_global_progress_callback
         self.download_images = download_images
         self.download_videos = download_videos
-        self.cancel_requested = False
+        self.cancel_event = threading.Event()
+        self.pause_event = threading.Event()
+        self.pause_event.set()
+        self.state_lock = threading.Lock()
+        self._is_paused = False
         self.language = language
         self.executor = ThreadPoolExecutor(max_workers=max_workers)  # Thread pool for concurrent downloads
         self.total_files = 0
@@ -38,6 +43,9 @@ class EromeDownloader:
 
     def request_cancel(self):
         self.cancel_requested = True
+        self.pause_event.set()
+        with self.state_lock:
+            self._is_paused = False
         self.log(self.tr("Download cancelled"))
         if self.is_profile_download:
             self.enable_widgets_callback()
@@ -47,8 +55,52 @@ class EromeDownloader:
             self.log_callback(message)
         self.log_messages.append(message)
 
+    def wait_if_paused(self):
+        while not self.pause_event.is_set():
+            if self.cancel_event.is_set():
+                return False
+            time.sleep(0.1)
+        return True
+
+    def request_pause(self):
+        if self.cancel_event.is_set():
+            return
+        with self.state_lock:
+            if self._is_paused:
+                return
+            self._is_paused = True
+        self.pause_event.clear()
+        self.log(self.tr("Download paused"))
+
+    def request_resume(self):
+        with self.state_lock:
+            if not self._is_paused:
+                return
+            self._is_paused = False
+        self.pause_event.set()
+        self.log(self.tr("Download resumed"))
+
+    @property
+    def is_paused(self):
+        with self.state_lock:
+            return self._is_paused
+
+    @property
+    def cancel_requested(self):
+        return self.cancel_event.is_set()
+
+    @cancel_requested.setter
+    def cancel_requested(self, value):
+        if value:
+            self.cancel_event.set()
+        else:
+            self.cancel_event.clear()
+
     def shutdown_executor(self):
         self.executor.shutdown(wait=False)
+        self.pause_event.set()
+        with self.state_lock:
+            self._is_paused = False
         self.log(self.tr("Executor shut down."))
         if self.is_profile_download:
             self.enable_widgets_callback()
@@ -75,6 +127,9 @@ class EromeDownloader:
 
     def download_file(self, url, file_path, resource_type, file_id=None, max_retries=999999):
         if self.cancel_requested:
+            return
+
+        if not self.wait_if_paused():
             return
 
         # Evita sobreescrituras y descargas duplicadas
@@ -106,6 +161,8 @@ class EromeDownloader:
                     with open(file_path, "wb") as f:
                         for chunk in response.iter_content(chunk_size=65536):
                             if self.cancel_requested:
+                                return
+                            if not self.wait_if_paused():
                                 return
                             f.write(chunk)
                             downloaded_size += len(chunk)

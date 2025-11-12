@@ -13,7 +13,7 @@ class Downloader:
 	def __init__(self, download_folder, max_workers=5, log_callback=None, 
 				enable_widgets_callback=None, update_progress_callback=None, 
 				update_global_progress_callback=None, headers=None,
-				max_retries=999999, retry_interval=1.0, stream_read_timeout=10,
+				max_retries=999999, retry_interval=1.0, stream_read_timeout=20,
 				download_images=True, download_videos=True, download_compressed=True, 
 				tr=None, folder_structure='default', rate_limit_interval=1.0):
 		
@@ -22,7 +22,11 @@ class Downloader:
 		self.enable_widgets_callback = enable_widgets_callback
 		self.update_progress_callback = update_progress_callback
 		self.update_global_progress_callback = update_global_progress_callback
-		self.cancel_requested = threading.Event()  
+		self.cancel_requested = threading.Event()
+		self.pause_event = threading.Event()
+		self.pause_event.set()
+		self.state_lock = threading.Lock()
+		self._is_paused = False
 		self.headers = headers or {
 			'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
 			'Referer': 'https://coomer.st/',
@@ -98,6 +102,36 @@ class Downloader:
 		if self.log_callback:
 			self.log_callback(self.tr(message) if self.tr else message)
 
+	def wait_if_paused(self):
+		while not self.pause_event.is_set():
+			if self.cancel_requested.is_set():
+				return False
+			time.sleep(0.1)
+		return True
+
+	def request_pause(self):
+		if self.cancel_requested.is_set():
+			return
+		with self.state_lock:
+			if self._is_paused:
+				return
+			self._is_paused = True
+		self.pause_event.clear()
+		self.log(self.tr("Download paused."))
+
+	def request_resume(self):
+		with self.state_lock:
+			if not self._is_paused:
+				return
+			self._is_paused = False
+		self.pause_event.set()
+		self.log(self.tr("Download resumed."))
+
+	@property
+	def is_paused(self):
+		with self.state_lock:
+			return self._is_paused
+
 	def set_download_mode(self, mode, max_workers):
 		
 		if mode == 'queue':
@@ -122,6 +156,9 @@ class Downloader:
 
 	def request_cancel(self):
 		self.cancel_requested.set()
+		self.pause_event.set()
+		with self.state_lock:
+			self._is_paused = False
 		self.log(self.tr("Download cancellation requested."))
 		for future in self.futures:
 			future.cancel()
@@ -129,6 +166,9 @@ class Downloader:
 	def shutdown_executor(self):
 		if not self.shutdown_called:
 			self.shutdown_called = True
+			self.pause_event.set()
+			with self.state_lock:
+				self._is_paused = False
 			if self.executor:
 				self.executor.shutdown(wait=True)
 			if self.enable_widgets_callback:
@@ -147,6 +187,9 @@ class Downloader:
 
 		for attempt in range(max_retries + 1):
 			if self.cancel_requested.is_set():
+				return None
+
+			if not self.wait_if_paused():
 				return None
 
 			with self.domain_locks[domain]:
@@ -406,6 +449,9 @@ class Downloader:
 		if self.cancel_requested.is_set():
 			return
 
+		if not self.wait_if_paused():
+			return
+
 		extension = os.path.splitext(media_url)[1].lower()
 		if (extension in self.image_extensions and not self.download_images) or \
 		(extension in self.video_extensions and not self.download_videos) or \
@@ -468,7 +514,9 @@ class Downloader:
 				with open(tmp_path, 'wb') as f:
 					for chunk in response.iter_content(chunk_size=1048576):
 						if self.cancel_requested.is_set():
-							raise Exception("Cancellation Requested") 
+							raise Exception("Cancellation Requested")
+						if not self.wait_if_paused():
+							raise Exception("Cancellation Requested")
 						if chunk:
 							f.write(chunk)
 							downloaded_size += len(chunk)
@@ -484,7 +532,9 @@ class Downloader:
 
 				
 				while total_size and downloaded_size < total_size:
-					
+
+					if not self.wait_if_paused():
+						raise Exception("Cancellation Requested")
 					resume_headers = self.headers.copy()
 					resume_headers['Range'] = f'bytes={downloaded_size}-'
 					self.log(f"Resuming download at byte {downloaded_size} for {media_url}")
@@ -497,6 +547,8 @@ class Downloader:
 					with open(tmp_path, 'ab') as f:
 						for chunk in part_response.iter_content(chunk_size=1048576):
 							if self.cancel_requested.is_set():
+								raise Exception("Cancellation Requested")
+							if not self.wait_if_paused():
 								raise Exception("Cancellation Requested")
 							if chunk:
 								f.write(chunk)
@@ -597,7 +649,10 @@ class Downloader:
 
 			self.total_files = 0
 			for post in posts:
-				
+
+				if not self.wait_if_paused():
+					return
+
 				current_post_id = post.get('id') or "unknown_id"
 				
 				title = post.get('title') or ""
@@ -619,6 +674,8 @@ class Downloader:
 			
 			futures = []
 			for post in posts:
+				if not self.wait_if_paused():
+					return
 				current_post_id = post.get('id') or "unknown_id"
 				title = post.get('title') or ""
 				time = post.get('published') or ""
@@ -679,6 +736,8 @@ class Downloader:
 			self.total_files = len(media_urls)
 			self.completed_files = 0
 			for post_id, media_urls in grouped_media_urls.items():
+				if not self.wait_if_paused():
+					return
 				for media_url in media_urls:
 					if self.download_mode == 'queue':
 						self.process_media_element(media_url, user_id, post_id)

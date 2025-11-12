@@ -23,7 +23,12 @@ class BunkrDownloader:
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
             'Accept-Language': 'en-US,en;q=0.9',
         }
-        self.cancel_requested = False  # Flag to indicate if a cancellation request has been made
+        self.cancel_event = threading.Event()  # Flag to indicate if a cancellation request has been made
+        self.pause_event = threading.Event()
+        self.pause_event.set()
+        self.state_lock = threading.Lock()
+        self._is_paused = False
+        self.cancel_requested = False
         self.executor = ThreadPoolExecutor(max_workers=max_workers)  # Thread pool executor for concurrent downloads
         self.total_files = 0
         self.completed_files = 0
@@ -57,13 +62,60 @@ class BunkrDownloader:
         full_message = f"{domain}: {message}"
         self.log_messages.append(full_message)  # Agregar mensaje a la cola
 
+    def wait_if_paused(self):
+        while not self.pause_event.is_set():
+            if self.cancel_event.is_set():
+                return False
+            time.sleep(0.1)
+        return True
+
+    def request_pause(self):
+        if self.cancel_event.is_set():
+            return
+        with self.state_lock:
+            if self._is_paused:
+                return
+            self._is_paused = True
+        self.pause_event.clear()
+        self.log("Download paused.")
+
+    def request_resume(self):
+        with self.state_lock:
+            if not self._is_paused:
+                return
+            self._is_paused = False
+        self.pause_event.set()
+        self.log("Download resumed.")
+
+    @property
+    def is_paused(self):
+        with self.state_lock:
+            return self._is_paused
+
+    @property
+    def cancel_requested(self):
+        return self.cancel_event.is_set()
+
+    @cancel_requested.setter
+    def cancel_requested(self, value):
+        if value:
+            self.cancel_event.set()
+        else:
+            self.cancel_event.clear()
+
     def request_cancel(self):
         self.cancel_requested = True
+        self.pause_event.set()
+        with self.state_lock:
+            self._is_paused = False
         self.log("Download has been cancelled.")
         self.shutdown_executor()
 
     def shutdown_executor(self):
         self.executor.shutdown(wait=False)
+        self.pause_event.set()
+        with self.state_lock:
+            self._is_paused = False
         self.log("Executor shut down.")
 
     def clean_filename(self, filename):
@@ -78,6 +130,10 @@ class BunkrDownloader:
     def download_file(self, url_media, ruta_carpeta, file_id):
         if self.cancel_requested:
             self.log("Descarga cancelada", url=url_media)
+            return
+
+        if not self.wait_if_paused():
+            self.log("Download cancelled.", url=url_media)
             return
 
         file_name = os.path.basename(urlparse(url_media).path)
@@ -106,6 +162,11 @@ class BunkrDownloader:
                     for chunk in response.iter_content(chunk_size=65536):  # Fragmentos de 64KB
                         if self.cancel_requested:
                             self.log("Descarga cancelada durante la descarga del archivo.", url=url_media)
+                            file.close()
+                            os.remove(file_path)
+                            return
+                        if not self.wait_if_paused():
+                            self.log("Download cancelled during file download.", url=url_media)
                             file.close()
                             os.remove(file_path)
                             return

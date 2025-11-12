@@ -2,6 +2,7 @@ import requests
 from bs4 import BeautifulSoup
 import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from app import progress_manager
 
@@ -12,6 +13,10 @@ class Jpg5Downloader:
         self.log_callback = log_callback
         self.tr = tr if tr else lambda x: x  # Función de traducción por defecto
         self.cancel_requested = threading.Event()  # Usar un evento para manejar la cancelación
+        self.pause_event = threading.Event()
+        self.pause_event.set()
+        self.state_lock = threading.Lock()
+        self._is_paused = False
         self.update_progress_callback = update_progress_callback
         self.update_global_progress_callback = update_global_progress_callback
         self.max_workers = max_workers
@@ -23,8 +28,41 @@ class Jpg5Downloader:
         else:
             print(message)
 
+    def wait_if_paused(self):
+        while not self.pause_event.is_set():
+            if self.cancel_requested.is_set():
+                return False
+            time.sleep(0.1)
+        return True
+
+    def request_pause(self):
+        if self.cancel_requested.is_set():
+            return
+        with self.state_lock:
+            if self._is_paused:
+                return
+            self._is_paused = True
+        self.pause_event.clear()
+        self.log(self.tr("Descarga en pausa"))
+
+    def request_resume(self):
+        with self.state_lock:
+            if not self._is_paused:
+                return
+            self._is_paused = False
+        self.pause_event.set()
+        self.log(self.tr("Descarga reanudada"))
+
+    @property
+    def is_paused(self):
+        with self.state_lock:
+            return self._is_paused
+
     def request_cancel(self):
         self.cancel_requested.set()  # Activar el evento de cancelación
+        self.pause_event.set()
+        with self.state_lock:
+            self._is_paused = False
         self.log(self.tr("Descarga cancelada por el usuario."))
 
     def descargar_imagenes(self):
@@ -35,6 +73,9 @@ class Jpg5Downloader:
         respuesta = requests.get(self.url)
         if self.cancel_requested.is_set():
             self.log(self.tr("Descarga cancelada por el usuario."))
+            return
+
+        if not self.wait_if_paused():
             return
 
         soup = BeautifulSoup(respuesta.content, 'html.parser')
@@ -49,11 +90,15 @@ class Jpg5Downloader:
                 if self.cancel_requested.is_set():
                     self.log(self.tr("Descarga cancelada por el usuario."))
                     return
+                if not self.wait_if_paused():
+                    return
 
                 enlaces = div.find_all('a', class_='image-container --media')
                 for enlace in enlaces:
                     if self.cancel_requested.is_set():
                         self.log(self.tr("Descarga cancelada por el usuario."))
+                        return
+                    if not self.wait_if_paused():
                         return
 
                     futures.append(executor.submit(self.descargar_enlace, enlace, i, total_divs))
@@ -70,6 +115,8 @@ class Jpg5Downloader:
             if self.cancel_requested.is_set():
                 self.log(self.tr("Descarga cancelada por el usuario."))
                 return
+            if not self.wait_if_paused():
+                return
 
             media_soup = BeautifulSoup(media_respuesta.content, 'html.parser')
 
@@ -84,6 +131,8 @@ class Jpg5Downloader:
                     if self.cancel_requested.is_set():
                         self.log(self.tr("Descarga cancelada por el usuario."))
                         return
+                    if not not self.wait_if_paused():
+                        return
 
                     img_nombre = os.path.basename(descarga_url)
                     img_path = os.path.join(self.carpeta_destino, img_nombre)
@@ -94,6 +143,8 @@ class Jpg5Downloader:
                         for chunk in img_respuesta.iter_content(chunk_size=1024):
                             if self.cancel_requested.is_set():
                                 self.log(self.tr("Descarga cancelada por el usuario."))
+                                return
+                            if not self.wait_if_paused():
                                 return
                             f.write(chunk)
                             downloaded_size += len(chunk)

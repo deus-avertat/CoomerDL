@@ -2,6 +2,8 @@ import os
 import json
 import re
 import queue
+import threading
+import time
 from pathlib import Path
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
@@ -22,6 +24,11 @@ class SimpCity:
         self.enable_widgets_callback = enable_widgets_callback
         self.update_progress_callback = update_progress_callback
         self.update_global_progress_callback = update_global_progress_callback
+        self.cancel_event = threading.Event()
+        self.pause_event = threading.Event()
+        self.pause_event.set()
+        self.state_lock = threading.Lock()
+        self._is_paused = False
         self.cancel_requested = False
         self.total_files = 0
         self.completed_files = 0
@@ -43,6 +50,56 @@ class SimpCity:
     def log(self, message):
         if self.log_callback:
             self.log_callback(message)
+
+    def wait_if_paused(self):
+        while not self.pause_event.is_set():
+            if self.cancel_event.is_set():
+                return False
+            time.sleep(0.1)
+        return True
+
+    def request_pause(self):
+        if self.cancel_event.is_set():
+            return
+        with self.state_lock:
+            if self._is_paused:
+                return
+            self._is_paused = True
+        self.pause_event.clear()
+        self.log(self.tr("Descarga en pausa"))
+
+    def request_resume(self):
+        with self.state_lock:
+            if not self._is_paused:
+                return
+            self._is_paused = False
+        self.pause_event.set()
+        self.log(self.tr("Descarga reanudada"))
+
+    def request_cancel(self):
+        self.cancel_requested = True
+        self.pause_event.set()
+        with self.state_lock:
+            self._is_paused = False
+        self.log(self.tr("Descarga cancelada por el usuario."))
+        if self.enable_widgets_callback:
+            self.enable_widgets_callback()
+
+    @property
+    def is_paused(self):
+        with self.state_lock:
+            return self._is_paused
+
+    @property
+    def cancel_requested(self):
+        return self.cancel_event.is_set()
+
+    @cancel_requested.setter
+    def cancel_requested(self, value):
+        if value:
+            self.cancel_event.set()
+        else:
+            self.cancel_event.clear()
 
     def sanitize_folder_name(self, name):
         return re.sub(r'[<>:"/\\|?*]', '_', name)
@@ -77,6 +134,8 @@ class SimpCity:
             self.scraper.cookies.set(cookie['name'], cookie['value'])
 
     def fetch_page(self, url):
+        if self.cancel_requested or not self.wait_if_paused():
+            return None
         try:
             cookies = self.get_cookies_with_selenium(url)
             self.set_cookies_in_scraper(cookies)
@@ -91,20 +150,31 @@ class SimpCity:
             return None
 
     def save_file(self, file_url, path):
+        if self.cancel_requested or not self.wait_if_paused():
+            return
         os.makedirs(os.path.dirname(path), exist_ok=True)
         response = self.scraper.get(file_url, stream=True)
         if response.status_code == 200:
             with open(path, 'wb') as file:
                 for chunk in response.iter_content(1024):
+                    if self.cancel_requested or not self.wait_if_paused():
+                        file.close()
+                        if os.path.exists(path):
+                            os.remove(path)
+                        return
                     file.write(chunk)
             self.log(self.tr(f"Archivo descargado: {path}"))
         else:
             self.log(self.tr(f"Error al descargar {file_url}: {response.status_code}"))
 
     def process_post(self, post_content, download_folder):
+        if self.cancel_requested or not self.wait_if_paused():
+            return
         # Procesar imágenes
         images = post_content.select(self.images_selector)
         for img in images:
+            if self.cancel_requested or not self.wait_if_paused():
+                return
             src = img.get('src')
             if src:
                 file_name = os.path.basename(urlparse(src).path)
@@ -114,6 +184,8 @@ class SimpCity:
         # Procesar videos
         videos = post_content.select(self.videos_selector)
         for video in videos:
+            if self.cancel_requested or not self.wait_if_paused():
+                return
             src = video.get('src')
             if src:
                 file_name = os.path.basename(urlparse(src).path)
@@ -125,6 +197,8 @@ class SimpCity:
         if attachments_block:
             attachments = attachments_block.select(self.attachments_selector)
             for attachment in attachments:
+                if self.cancel_requested or not self.wait_if_paused():
+                    return
                 href = attachment.get('href')
                 if href:
                     file_name = os.path.basename(urlparse(href).path)
@@ -132,6 +206,8 @@ class SimpCity:
                     self.save_file(href, file_path)
 
     def process_page(self, url):
+        if self.cancel_requested or not self.wait_if_paused():
+            return
         soup = self.fetch_page(url)
         if not soup:
             return
@@ -143,6 +219,8 @@ class SimpCity:
 
         message_inners = soup.select(self.posts_selector)
         for post in message_inners:
+            if self.cancel_requested or not self.wait_if_paused():
+                return
             post_content = post.select_one(self.post_content_selector)
             if post_content:
                 self.process_post(post_content, download_folder)
@@ -151,9 +229,13 @@ class SimpCity:
         if next_page:
             next_page_url = next_page.get('href')
             if next_page_url:
+                if self.cancel_requested or not self.wait_if_paused():
+                    return
                 self.process_page(self.base_url + next_page_url)
 
     def download_images_from_simpcity(self, url):
+        if self.cancel_requested or not self.wait_if_paused():
+            return
         self.log(self.tr(f"Procesando hilo: {url}"))
         self.process_page(url)
         self.log(self.tr("Descarga completada."))
