@@ -64,7 +64,8 @@ class Downloader:
 		self.post_attachment_counter = defaultdict(int)
 		self.subdomain_cache = {}
 		self.subdomain_locks = defaultdict(threading.Lock)
-		self.stream_read_timeout = stream_read_timeout 
+		self.stream_read_timeout = stream_read_timeout
+		self.partial_update_interval = 5.0
 
 		
 		db_folder = os.path.join("resources", "config")
@@ -73,6 +74,7 @@ class Downloader:
 		self.db_lock = threading.Lock()  
 		self.init_db()
 		self.load_download_cache()
+		self.load_partial_downloads()
 		
 
 	def init_db(self):
@@ -89,6 +91,18 @@ class Downloader:
 				downloaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 			)
 		""")
+		self.db_cursor.execute("""
+							   CREATE TABLE IF NOT EXISTS partial_downloads
+							   (
+								   media_url       TEXT PRIMARY KEY,
+								   tmp_path        TEXT,
+								   downloaded_size INTEGER,
+								   total_size      INTEGER,
+								   user_id         TEXT,
+								   post_id         TEXT,
+								   updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+							   )
+							   """)
 		self.db_connection.commit()
 
 	def load_download_cache(self):
@@ -97,6 +111,68 @@ class Downloader:
 			rows = self.db_cursor.fetchall()
 		self.download_cache = {row[0]: (row[1], row[2]) for row in rows}
 
+	def load_partial_downloads(self):
+		with self.db_lock:
+			self.db_cursor.execute(
+				"SELECT media_url, tmp_path, downloaded_size, total_size, user_id, post_id FROM partial_downloads")
+			rows = self.db_cursor.fetchall()
+
+		self.partial_downloads = {}
+		stale_entries = []
+		for media_url, tmp_path, downloaded_size, total_size, user_id, post_id in rows:
+			if tmp_path and os.path.exists(tmp_path):
+				self.partial_downloads[media_url] = {
+					"tmp_path": tmp_path,
+					"downloaded_size": downloaded_size or 0,
+					"total_size": total_size or 0,
+					"user_id": user_id,
+					"post_id": post_id,
+				}
+			else:
+				stale_entries.append(media_url)
+
+		if stale_entries:
+			with self.db_lock:
+				self.db_cursor.executemany("DELETE FROM partial_downloads WHERE media_url = ?",
+										   [(url,) for url in stale_entries])
+				self.db_connection.commit()
+
+	def update_partial_download(self, media_url, tmp_path, downloaded_size, total_size, user_id, post_id):
+		if not media_url or not tmp_path:
+			return
+
+		stored_total_size = total_size if total_size else None
+		with self.db_lock:
+			self.db_cursor.execute("""
+								   INSERT INTO partial_downloads (media_url, tmp_path, downloaded_size, total_size,
+																  user_id, post_id, updated_at)
+								   VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+								   ON CONFLICT(media_url) DO UPDATE SET tmp_path        = excluded.tmp_path,
+																		downloaded_size = excluded.downloaded_size,
+																		total_size      = excluded.total_size,
+																		user_id         = excluded.user_id,
+																		post_id         = excluded.post_id,
+																		updated_at      = CURRENT_TIMESTAMP
+								   """,
+								   (media_url, tmp_path, downloaded_size, stored_total_size, user_id, post_id)
+								   )
+		self.db_connection.commit()
+
+		self.partial_downloads[media_url] = {
+			"tmp_path": tmp_path,
+			"downloaded_size": downloaded_size,
+			"total_size": total_size or 0,
+			"user_id": user_id,
+			"post_id": post_id,
+		}
+
+	def remove_partial_download(self, media_url):
+		if not media_url:
+			return
+		with self.db_lock:
+			self.db_cursor.execute("DELETE FROM partial_downloads WHERE media_url = ?", (media_url,))
+			self.db_connection.commit()
+		self.partial_downloads.pop(media_url, None)
 
 	def log(self, message):
 		if self.log_callback:
@@ -473,27 +549,44 @@ class Downloader:
 
 		final_path = os.path.normpath(os.path.join(media_folder, filename))
 		tmp_path = final_path + ".tmp"
+		partial_info = self.partial_downloads.get(media_url)
+		downloaded_size = 0
+		total_size = 0
+		if partial_info:
+			stored_tmp_path = partial_info.get("tmp_path")
+			if stored_tmp_path and stored_tmp_path != tmp_path and os.path.exists(
+					stored_tmp_path) and not os.path.exists(tmp_path):
+				try:
+					os.makedirs(os.path.dirname(tmp_path), exist_ok=True)
+					os.rename(stored_tmp_path, tmp_path)
+				except OSError:
+					pass
+			total_size = partial_info.get("total_size", 0) or 0
 
+		if os.path.exists(tmp_path):
+			downloaded_size = os.path.getsize(tmp_path)
+			if downloaded_size > 0:
+				self.log(f"Found existing partial file ({downloaded_size} bytes) for {media_url}")
+			if partial_info and partial_info.get("downloaded_size") and partial_info.get(
+					"downloaded_size") > downloaded_size:
+				self.log("Stored progress is ahead of file size; using on-disk bytes instead.")
+
+		self.update_partial_download(media_url, tmp_path, downloaded_size, total_size, user_id, post_id)
 		
 		if media_url in self.download_cache:
 			self.log(f"File from {media_url} is in DB, skipping.")
 			with self.file_lock:
 				self.skipped_files.append(final_path)
+				self.remove_partial_download(media_url)
 			return
 
 		self.log(f"Starting download from {media_url}")
-
-		downloaded_size = 0
-		total_size = 0
-		if os.path.exists(tmp_path):
-			downloaded_size = os.path.getsize(tmp_path)
-			if downloaded_size > 0:
-				self.log(f"Found existing partial file ({downloaded_size} bytes) for {media_url}")
 
 		for attempt in range(self.max_retries + 1):
 			if self.cancel_requested.is_set():
 				if os.path.exists(tmp_path):
 					os.remove(tmp_path)
+					self.remove_partial_download(media_url)
 				self.log(f"Download cancelled from {media_url}")
 				return
 
@@ -540,6 +633,9 @@ class Downloader:
 						else:
 							total_size = length_value
 
+				self.update_partial_download(media_url, tmp_path, downloaded_size, total_size, user_id, post_id)
+				last_partial_update = time.time()
+
 				with open(tmp_path, file_mode) as f:
 					for chunk in response.iter_content(chunk_size=1048576):
 						if self.cancel_requested.is_set():
@@ -549,6 +645,9 @@ class Downloader:
 						if chunk:
 							f.write(chunk)
 							downloaded_size += len(chunk)
+							if time.time() - last_partial_update >= self.partial_update_interval:
+								self.update_partial_download(media_url, tmp_path, downloaded_size, total_size, user_id, post_id)
+								last_partial_update = time.time()
 							if self.update_progress_callback:
 								elapsed_time = time.time() - self.start_time
 								bytes_this_attempt = downloaded_size - attempt_start_downloaded
@@ -583,6 +682,9 @@ class Downloader:
 							if chunk:
 								f.write(chunk)
 								downloaded_size += len(chunk)
+							if time.time() - last_partial_update >= self.partial_update_interval:
+								self.update_partial_download(media_url, tmp_path, downloaded_size, total_size, user_id, post_id)
+								last_partial_update = time.time()
 								if self.update_progress_callback:
 									elapsed_time = time.time() - self.start_time
 									bytes_this_attempt = downloaded_size - attempt_start_downloaded
@@ -604,6 +706,7 @@ class Downloader:
 					if os.path.exists(final_path):
 						os.remove(final_path)
 					os.rename(tmp_path, final_path)
+				self.remove_partial_download(media_url)
 
 				
 				with self.file_lock:
@@ -629,6 +732,7 @@ class Downloader:
 				if str(e) == "Cancellation Requested":
 					if os.path.exists(tmp_path):
 						os.remove(tmp_path)
+					self.remove_partial_download(media_url)
 					self.log(f"Download cancelled from {media_url}")
 					return 
 
@@ -637,6 +741,7 @@ class Downloader:
 					continue
 
 		self.log(f"Failed to download {media_url} after {self.max_retries + 1} total download attempts.")
+		self.update_partial_download(media_url, tmp_path, downloaded_size, total_size, user_id, post_id)
 		with self.file_lock:
 			self.failed_files.append(media_url)
 
