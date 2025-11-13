@@ -1,4 +1,5 @@
 import datetime
+import copy
 import json
 import queue
 import sys
@@ -387,6 +388,18 @@ class ImageDownloaderApp(ctk.CTk):
 
         self.all_logs = []  # Lista para almacenar todos los logs
 
+        self.download_start_time = None
+        self.errors = []
+        self.warnings = []
+        self.current_download_context = None
+        self.last_download_metadata = None
+        self.last_history_session_id = None
+        self.history_file = Path("resources/config/logs/download_history.json")
+        self.download_history = self.load_download_history()
+        self.history_service_filter_value = "__all__"
+        self.history_service_display_map = {}
+        self.cancelled_downloader_snapshot = None
+
         # About window
         self.about_window = AboutWindow(self, self.tr, VERSION)  # Inicializa AboutWindow
         
@@ -419,11 +432,6 @@ class ImageDownloaderApp(ctk.CTk):
         self.update_queue = queue.Queue()
         self.check_update_queue()
         self.protocol("WM_DELETE_WINDOW", self.on_app_close)
-
-        self.download_start_time = None
-        self.errors = []
-        self.warnings = []
-
         
         # Load all settings with defaults from the settings object
         self.max_downloads = self.settings.get('max_downloads', 3)
@@ -625,9 +633,13 @@ class ImageDownloaderApp(ctk.CTk):
         # self.log_textbox.pack(pady=(10, 0), padx=20, fill='both', expand=True)
         # self.log_textbox.configure(state="disabled")
 
+        # Log and history container
+        self.log_history_container = ctk.CTkFrame(self)
+        self.log_history_container.pack(pady=(10, 0), padx=20, fill='both', expand=True)
+
         # Log Textbox
-        self.log_frame = ctk.CTkFrame(self)
-        self.log_frame.pack(pady=(10, 0), padx=20, fill='both', expand=True)
+        self.log_frame = ctk.CTkFrame(self.log_history_container)
+        self.log_frame.pack(side='left', fill='both', expand=True)
 
         self.log_textbox = ctk.CTkTextbox(self.log_frame, width=590, height=200, activate_scrollbars=False)
         self.log_textbox.pack(side='left', fill='both', expand=True)
@@ -636,6 +648,46 @@ class ImageDownloaderApp(ctk.CTk):
         self.log_scrollbar.pack(side='right', fill='y')
 
         self.log_textbox.configure(state="disabled", yscrollcommand=self.log_scrollbar.set)
+
+        # Download history sidebar
+        self.history_frame = ctk.CTkFrame(self.log_history_container, width=260)
+        self.history_frame.pack(side='left', fill='y', padx=(10, 0))
+
+        self.history_title_label = ctk.CTkLabel(
+            self.history_frame,
+            text=self.tr("Recent Sessions"),
+            font=("Arial", 14, "bold")
+        )
+        self.history_title_label.pack(fill='x', padx=5, pady=(5, 5))
+
+        self.history_search_var = tk.StringVar()
+        self.history_search_var.trace_add("write", lambda *_: self.update_history_display())
+
+        self.history_search_entry = ctk.CTkEntry(
+            self.history_frame,
+            textvariable=self.history_search_var,
+            placeholder_text=self.tr("Search sessions...")
+        )
+        self.history_search_entry.pack(fill='x', padx=5, pady=(0, 10))
+
+        self.history_service_filter = ctk.CTkComboBox(
+            self.history_frame,
+            values=[],
+            command=self.on_history_service_selected
+        )
+        self.history_service_filter.pack(fill='x', padx=5, pady=(0, 10))
+
+        self.history_results_label = ctk.CTkLabel(
+            self.history_frame,
+            text=""
+        )
+        self.history_results_label.pack(fill='x', padx=5)
+
+        self.history_list_frame = ctk.CTkScrollableFrame(self.history_frame)
+        self.history_list_frame.pack(fill='both', expand=True, padx=5, pady=(5, 5))
+
+        self.refresh_history_filters()
+        self.update_history_display()
 
         # Progress frame
         self.progress_frame = ctk.CTkFrame(self)
@@ -716,7 +768,14 @@ class ImageDownloaderApp(ctk.CTk):
         self.title(self.tr(f"Downloader [{VERSION}]"))
         self.update_download_button.configure(text=self.tr("Download Now"))
 
-    
+        if hasattr(self, "history_title_label"):
+            self.history_title_label.configure(text=self.tr("Recent Sessions"))
+        if hasattr(self, "history_search_entry"):
+            self.history_search_entry.configure(placeholder_text=self.tr("Search sessions..."))
+        self.refresh_history_filters()
+        self.update_history_display()
+
+
     def open_download_folder(self, event=None):
         if self.download_folder and os.path.exists(self.download_folder):
             if sys.platform == "win32":
@@ -1036,9 +1095,120 @@ class ImageDownloaderApp(ctk.CTk):
         try:
             download_method(*args)
         finally:
+            self.record_download_session()
             self.active_downloader = None
             self.enable_widgets()
             self.export_logs()
+
+    def record_download_session(self):
+        context = self.current_download_context or {}
+        downloader = self.active_downloader or self.cancelled_downloader_snapshot
+        if not context and downloader is None:
+            self.last_download_metadata = None
+            self.last_history_session_id = None
+            return
+
+        finished_at = datetime.datetime.now()
+        start_dt = context.get("started_at") or self.download_start_time
+        if isinstance(start_dt, str):
+            try:
+                start_dt = datetime.datetime.fromisoformat(start_dt)
+            except ValueError:
+                start_dt = None
+        duration_seconds = (finished_at - start_dt).total_seconds() if start_dt else None
+        human_duration = None
+        if duration_seconds is not None:
+            human_duration = str(datetime.timedelta(seconds=int(duration_seconds)))
+
+        total_files = int(getattr(downloader, "total_files", 0) or 0) if downloader else 0
+        completed_files = int(getattr(downloader, "completed_files", 0) or 0) if downloader else 0
+
+        skipped_attr = getattr(downloader, "skipped_files", []) if downloader else []
+        failed_attr = getattr(downloader, "failed_files", []) if downloader else []
+
+        def _normalize_list(value):
+            if isinstance(value, list):
+                return [str(item) for item in value]
+            if isinstance(value, tuple) or isinstance(value, set):
+                return [str(item) for item in value]
+            return []
+
+        skipped_files = _normalize_list(skipped_attr)
+        failed_files = _normalize_list(failed_attr)
+
+        skipped_count = len(skipped_files) if skipped_files else int(skipped_attr or 0) if isinstance(skipped_attr,
+                                                                                                      int) else 0
+        failed_count = len(failed_files) if failed_files else int(failed_attr or 0) if isinstance(failed_attr,
+                                                                                                  int) else 0
+
+        cancelled = False
+        if downloader is not None:
+            cancel_attr = getattr(downloader, "cancel_requested", None)
+            if isinstance(cancel_attr, threading.Event):
+                cancelled = cancel_attr.is_set()
+            elif hasattr(cancel_attr, "is_set") and callable(getattr(cancel_attr, "is_set")):
+                try:
+                    cancelled = cancel_attr.is_set()
+                except Exception:
+                    cancelled = bool(cancel_attr)
+            elif callable(cancel_attr):
+                try:
+                    cancelled = bool(cancel_attr())
+                except TypeError:
+                    cancelled = bool(cancel_attr)
+            elif cancel_attr is not None:
+                cancelled = bool(cancel_attr)
+
+        status = "cancelled" if cancelled else "completed"
+
+        session_id = finished_at.strftime("%Y%m%d%H%M%S%f")
+        counts = {
+            "total": total_files,
+            "completed": completed_files,
+            "skipped": skipped_count,
+            "failed": failed_count,
+        }
+
+        options = context.get("options") or {}
+        extra = context.get("extra") or {}
+
+        metadata = {
+            "session_id": session_id,
+            "url": context.get("url"),
+            "service": context.get("service"),
+            "site": context.get("site"),
+            "user": context.get("user"),
+            "mode": context.get("mode"),
+            "status": status,
+            "started_at": start_dt.isoformat() if start_dt else None,
+            "finished_at": finished_at.isoformat(),
+            "duration_seconds": round(duration_seconds, 2) if duration_seconds is not None else None,
+            "duration_human": human_duration,
+            "counts": counts,
+            "skipped_files": skipped_files,
+            "failed_files": failed_files,
+            "options": options,
+            "extra": extra,
+            "log_entries": len(self.all_logs) if hasattr(self, "all_logs") and self.all_logs else 0,
+        }
+
+        if self.download_history is None:
+            self.download_history = []
+
+        existing_entry = next((entry for entry in self.download_history if entry.get("session_id") == session_id), None)
+        if existing_entry:
+            existing_entry.update(metadata)
+        else:
+            self.download_history.append(metadata)
+
+        self.last_download_metadata = metadata
+        self.last_history_session_id = session_id
+        self.save_download_history()
+        self.refresh_history_filters()
+        self.update_history_display()
+        self.current_download_context = None
+        self.download_start_time = None
+        self.cancelled_downloader_snapshot = None
 
     def perform_ck_preflight(self, site, service, user, post_id, query, initial_offset):
         try:
@@ -1115,8 +1285,21 @@ class ImageDownloaderApp(ctk.CTk):
         self.pause_button.configure(state="normal")
         self.resume_button.configure(state="disabled")
         self.download_start_time = datetime.datetime.now()
+        self.last_download_metadata = None
+        self.last_history_session_id = None
         self.errors = []
         download_all = True
+
+        self.current_download_context = {
+            "url": url,
+            "started_at": self.download_start_time,
+            "options": {
+                "images": bool(self.download_images_check.get()),
+                "videos": bool(self.download_videos_check.get()),
+                "compressed": bool(self.download_compressed_check.get()),
+            },
+            "extra": {},
+        }
 
         parsed_url = urlparse(url)
         
@@ -1125,6 +1308,11 @@ class ImageDownloaderApp(ctk.CTk):
             is_profile_download = "/a/" not in url
             self.setup_erome_downloader(is_profile_download=is_profile_download)
             self.active_downloader = self.erome_downloader
+            self.current_download_context.update({
+                "service": "Erome",
+                "site": parsed_url.netloc,
+                "mode": "profile" if is_profile_download else "album",
+            })
             if "/a/" in url:
                 self.add_log_message_safe(self.tr("URL del álbum"))
                 download_thread = threading.Thread(target=self.wrapped_download, args=(self.active_downloader.process_album_page, url, self.download_folder, self.download_images_check.get(), self.download_videos_check.get()))
@@ -1136,12 +1324,18 @@ class ImageDownloaderApp(ctk.CTk):
             self.add_log_message_safe(self.tr("Descargando Bunkr"))
             self.setup_bunkr_downloader()
             self.active_downloader = self.bunkr_downloader
+            self.current_download_context.update({
+                "service": "Bunkr",
+                "site": parsed_url.netloc,
+            })
             # Si la URL contiene "/v/", "/i/" o "/f/", la tratamos como un post individual.
             if any(sub in url for sub in ["/v/", "/i/", "/f/"]):
                 self.add_log_message_safe(self.tr("URL del post"))
+                self.current_download_context["mode"] = "post"
                 download_thread = threading.Thread(target=self.wrapped_download, args=(self.bunkr_downloader.descargar_post_bunkr, url))
             else:
                 self.add_log_message_safe(self.tr("URL del perfil"))
+                self.current_download_context["mode"] = "profile"
                 download_thread = threading.Thread(target=self.wrapped_download, args=(self.bunkr_downloader.descargar_perfil_bunkr, url))
         
         elif parsed_url.netloc in ["coomer.st", "kemono.cr"]:
@@ -1163,11 +1357,25 @@ class ImageDownloaderApp(ctk.CTk):
                 self.download_button.configure(state="normal")
                 self.cancel_button.configure(state="disabled")
                 self.reset_pause_controls()
+                self.current_download_context = None
                 return
 
             self.add_log_message_safe(self.tr("Servicio extraído: {service} del sitio: {site}", service=service, site=site))
 
+            self.current_download_context.update({
+                "service": service,
+                "site": site,
+                "user": user,
+                "mode": "post" if post is not None else "profile",
+            })
+
             query, offset = extract_ck_query(parsed_url)
+
+            self.current_download_context["extra"].update({
+                "query": query,
+                "initial_offset": offset,
+            })
+
             preflight_enabled = bool(self.enable_preflight_check.get())
             preflight_data = None
             selected_posts = None
@@ -1178,11 +1386,17 @@ class ImageDownloaderApp(ctk.CTk):
                     self.download_button.configure(state="normal")
                     self.cancel_button.configure(state="disabled")
                     self.active_downloader = None
+                    self.current_download_context = None
                     self.reset_pause_controls()
                     return
                 selected_posts = preflight_data.get("selected_posts")
                 total_posts = preflight_data.get("total_posts", 0)
                 download_all = selected_posts is None or len(selected_posts) == total_posts
+                self.current_download_context["extra"].update({
+                    "preflight_total_posts": total_posts,
+                    "selected_post_count": len(selected_posts) if selected_posts else 0,
+                    "download_all": download_all,
+                })
 
             if post is not None:
                 self.add_log_message_safe(self.tr("Descargando post único..."))
@@ -1190,6 +1404,7 @@ class ImageDownloaderApp(ctk.CTk):
             else:
                 self.add_log_message_safe(self.tr("Descargando todo el contenido del usuario..."))
                 total_posts = preflight_data.get("total_posts", 0) if preflight_data else 0
+                self.current_download_context["extra"].update({"target_post_count": total_posts})
                 download_thread = threading.Thread(
                     target=self.wrapped_download,
                     args=(
@@ -1208,12 +1423,22 @@ class ImageDownloaderApp(ctk.CTk):
             self.add_log_message_safe(self.tr("Descargando SimpCity"))
             self.setup_simpcity_downloader()
             self.active_downloader = self.simpcity_downloader
+            self.current_download_context.update({
+                "service": "SimpCity",
+                "site": parsed_url.netloc,
+                "mode": "profile",
+            })
             # Iniciar la descarga en un hilo separado
             download_thread = threading.Thread(target=self.wrapped_download, args=(self.active_downloader.download_images_from_simpcity, url))
         
         elif "jpg5.su" in url:
             self.add_log_message_safe(self.tr("Descargando desde Jpg5"))
             self.setup_jpg5_downloader()
+            self.current_download_context.update({
+                "service": "Jpg5",
+                "site": parsed_url.netloc,
+                "mode": "gallery",
+            })
             
             # Usar wrapped_download para manejar la descarga
             download_thread = threading.Thread(target=self.wrapped_download, args=(self.active_downloader.descargar_imagenes,))
@@ -1223,6 +1448,7 @@ class ImageDownloaderApp(ctk.CTk):
             self.download_button.configure(state="normal")
             self.cancel_button.configure(state="disabled")
             self.reset_pause_controls()
+            self.current_download_context = None
             return
 
         download_thread.start()
@@ -1239,19 +1465,12 @@ class ImageDownloaderApp(ctk.CTk):
         )
         if download_info:
             self.add_log_message_safe(f"Download info: {download_info}")
-        # Llamar a export_logs al finalizar la descarga
-        self.export_logs()
-        self.active_downloader = None  # Resetea la active_downloader cuando la descarga termina
-        self.enable_widgets()  # Asegúrate de habilitar los widgets
+
     
     def start_ck_post_download(self, site, service, user, post):
         download_info = self.active_downloader.download_single_post(site, post, service, user)
         if download_info:
             self.add_log_message_safe(f"Download info: {download_info}")
-        # Llamar a export_logs al finalizar la descarga
-        self.export_logs()
-        self.active_downloader = None  # Resetea la active_downloader cuando la descarga termina
-        self.enable_widgets()  # Asegúrate de habilitar los widgets
 
     def extract_user_id(self, url):
         self.add_log_message_safe(self.tr("Extrayendo ID del usuario del URL: {url}", url=url))
@@ -1278,6 +1497,9 @@ class ImageDownloaderApp(ctk.CTk):
 
     def cancel_download(self):
         if self.active_downloader:
+            self.cancelled_downloader_snapshot = self.active_downloader
+            if self.current_download_context and isinstance(self.current_download_context, dict):
+                self.current_download_context.setdefault("extra", {})["cancel_requested"] = True
             self.active_downloader.request_cancel()
             self.active_downloader = None
             self.clear_progress_bars()
@@ -1326,6 +1548,8 @@ class ImageDownloaderApp(ctk.CTk):
         if not hasattr(self, "errors") or self.errors is None:
             self.errors = []
         self.errors.append(message)
+        if hasattr(self, "all_logs") and self.all_logs is not None:
+            self.all_logs.append(message)
 
         # Intenta escribir en el textbox si existe; si no, bufferiza
         try:
@@ -1357,56 +1581,228 @@ class ImageDownloaderApp(ctk.CTk):
 
     # Export logs to a file
     def export_logs(self):
-        log_folder = "resources/config/logs/"
-        Path(log_folder).mkdir(parents=True, exist_ok=True)
-        log_file_path = Path(log_folder) / f"log_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        log_folder = Path("resources/config/logs/")
+        log_folder.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        log_file_path = log_folder / f"log_{timestamp}.txt"
+        metadata = copy.deepcopy(self.last_download_metadata) if self.last_download_metadata else None
         try:
-            if self.active_downloader:
-                total_files = self.active_downloader.total_files
-                completed_files = self.active_downloader.completed_files
-                skipped_files = self.active_downloader.skipped_files
-                failed_files = self.active_downloader.failed_files
-            else:
-                total_files = 0
-                completed_files = 0
-                skipped_files = []
-                failed_files = []
-            
-            # Info general
-            total_images = completed_files if self.download_images_check.get() else 0
-            total_videos = completed_files if self.download_videos_check.get() else 0
-            errors = len(self.errors)
-            warnings = len(self.warnings)
-            if self.download_start_time:
-                duration = datetime.datetime.now() - self.download_start_time
-            else:
-                duration = "N/A"
+            summary_lines = []
+            skipped_files = []
+            failed_files = []
+            counts = {}
 
-            skipped_files_summary = "\n".join(skipped_files)
-            failed_files_summary = "\n".join(failed_files)
+            if metadata:
+                counts = metadata.get("counts", {}) or {}
+                skipped_files = metadata.get("skipped_files") or []
+                failed_files = metadata.get("failed_files") or []
 
-            summary = (
-                f"Total de archivos descargados: {total_files}\n"
-                f"Total de imágenes descargadas: {total_images}\n"
-                f"Total de videos descargados: {total_videos}\n"
-                f"Errores: {errors}\n"
-                f"Advertencias: {warnings}\n"
-                f"Tiempo total de descarga: {duration}\n\n"
-                f"Archivos saltados:\n{skipped_files_summary}\n\n"
-                f"Archivos fallidos:\n{failed_files_summary}\n\n"
-            )
+                summary_lines.extend([
+                    f"Service: {metadata.get('service', 'Unknown')}",
+                    f"Site: {metadata.get('site', 'Unknown')}",
+                    f"URL: {metadata.get('url', 'N/A')}",
+                    f"User: {metadata.get('user', 'N/A')}",
+                    f"Mode: {metadata.get('mode', 'N/A')}",
+                    f"Status: {metadata.get('status', 'completed')}",
+                    f"Started at: {metadata.get('started_at', 'N/A')}",
+                    f"Finished at: {metadata.get('finished_at', 'N/A')}",
+                    f"Duration (seconds): {metadata.get('duration_seconds', 'N/A')}",
+                    f"Duration (human): {metadata.get('duration_human', 'N/A')}",
+                    f"Total files: {counts.get('total', 0)}",
+                    f"Completed files: {counts.get('completed', 0)}",
+                    f"Skipped files: {counts.get('skipped', 0)}",
+                    f"Failed files: {counts.get('failed', 0)}",
+                ])
+
+                options = metadata.get("options") or {}
+                if options:
+                    summary_lines.append("Options:")
+                    for key, value in options.items():
+                        summary_lines.append(f"  {key}: {value}")
+
+                extra = metadata.get("extra") or {}
+                if extra:
+                    summary_lines.append("Extra:")
+                    for key, value in extra.items():
+                        summary_lines.append(f"  {key}: {value}")
+            else:
+                summary_lines.append("No metadata available for this session.")
+
+                skipped_summary = "\n".join(skipped_files) if skipped_files else "None"
+                failed_summary = "\n".join(failed_files) if failed_files else "None"
+
+                summary_lines.append("")
+                summary_lines.append("Skipped files:")
+                summary_lines.append(skipped_summary)
+                summary_lines.append("")
+                summary_lines.append("Failed files:")
+                summary_lines.append(failed_summary)
 
             with open(log_file_path, 'w', encoding='utf-8') as file:
-                # Escribimos el resumen
-                file.write(summary)
-                # Escribimos TODOS los mensajes (no solo los del textbox)
-                file.write("\n--- LOGS COMPLETOS ---\n")
-                file.write("\n".join(self.all_logs))
+                file.write("\n".join(summary_lines))
+                file.write("\n\n--- COMPLETE LOGS ---\n")
+                if hasattr(self, "all_logs") and self.all_logs:
+                    file.write("\n".join(self.all_logs))
+
+            metadata_file_path = None
+            if metadata:
+                metadata.setdefault("counts", counts)
+                metadata["log_file"] = str(log_file_path)
+                metadata_file_path = log_folder / f"log_{timestamp}.json"
+                with open(metadata_file_path, 'w', encoding='utf-8') as metadata_file:
+                    json.dump(metadata, metadata_file, ensure_ascii=False, indent=2)
+                self.last_download_metadata = metadata
+
+                if self.last_history_session_id:
+                    for entry in reversed(self.download_history):
+                        if entry.get("session_id") == self.last_history_session_id:
+                            entry["log_file"] = str(log_file_path)
+                            if metadata_file_path:
+                                entry["metadata_file"] = str(metadata_file_path)
+                            break
+                    self.save_download_history()
 
             self.add_log_message_safe(f"Logs exportados exitosamente a {log_file_path}")
         except Exception as e:
             self.add_log_message_safe(f"No se pudo exportar los logs: {e}")
 
+    def load_download_history(self):
+        try:
+            self.history_file.parent.mkdir(parents=True, exist_ok=True)
+            if self.history_file.exists():
+                with open(self.history_file, 'r', encoding='utf-8') as file:
+                    data = json.load(file)
+                    if isinstance(data, list):
+                        return data
+        except Exception as exc:
+            try:
+                self.add_log_message_safe(f"No se pudo cargar el historial de descargas: {exc}")
+            except Exception:
+                print(f"No se pudo cargar el historial de descargas: {exc}")
+        return []
+
+    def save_download_history(self):
+        if self.download_history is None:
+            return
+        try:
+            self.history_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.history_file, 'w', encoding='utf-8') as file:
+                json.dump(self.download_history, file, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            try:
+                self.add_log_message_safe(f"No se pudo guardar el historial de descargas: {exc}")
+            except Exception:
+                print(f"No se pudo guardar el historial de descargas: {exc}")
+
+    def on_history_service_selected(self, choice):
+        selected_value = self.history_service_display_map.get(choice, "__all__") if hasattr(self,
+                                                                                            "history_service_display_map") else "__all__"
+        self.history_service_filter_value = selected_value or "__all__"
+        self.update_history_display()
+
+    def refresh_history_filters(self):
+        if not hasattr(self, "history_service_filter"):
+            return
+        services = sorted({entry.get("service") or "" for entry in (self.download_history or [])})
+        display_map = {self.tr("All Services"): "__all__"}
+        for service in services:
+            display_name = service if service else self.tr("Unknown Service")
+            display_map[display_name] = service
+        self.history_service_display_map = display_map
+        values = list(display_map.keys())
+        current_display = next(
+            (display for display, value in display_map.items() if value == self.history_service_filter_value), None)
+        if not current_display and values:
+            current_display = values[0]
+            self.history_service_filter_value = display_map[current_display]
+        self.history_service_filter.configure(values=values)
+        if current_display:
+            self.history_service_filter.set(current_display)
+
+    def update_history_display(self):
+        if not hasattr(self, "history_list_frame"):
+            return
+
+        for widget in self.history_list_frame.winfo_children():
+            widget.destroy()
+
+        entries = list(self.download_history or [])
+        total_entries = len(entries)
+        query = ""
+        if hasattr(self, "history_search_var") and self.history_search_var:
+            query = self.history_search_var.get().strip().lower()
+
+        service_filter = getattr(self, "history_service_filter_value", "__all__")
+
+        filtered_entries = []
+        for entry in reversed(entries):
+            service_value = entry.get("service") or ""
+            matches_service = service_filter == "__all__" or service_value == service_filter
+            if not matches_service:
+                continue
+            if query:
+                searchable = [
+                    service_value,
+                    entry.get("site", ""),
+                    entry.get("user", ""),
+                    entry.get("status", ""),
+                    entry.get("url", ""),
+                ]
+                if not any(query in str(value).lower() for value in searchable):
+                    continue
+            filtered_entries.append(entry)
+
+        if hasattr(self, "history_results_label"):
+            if total_entries:
+                results_text = self.tr("Showing {count} of {total} sessions").format(count=len(filtered_entries),
+                                                                                     total=total_entries)
+            else:
+                results_text = self.tr("No sessions recorded yet.")
+            self.history_results_label.configure(text=results_text)
+
+        if not filtered_entries:
+            if total_entries:
+                empty_text = self.tr("No sessions match the current filters.")
+            else:
+                empty_text = self.tr("No sessions recorded yet.")
+            empty_label = ctk.CTkLabel(self.history_list_frame, text=empty_text, justify='left', anchor='w')
+            empty_label.pack(fill='x', padx=5, pady=5)
+            return
+
+        for entry in filtered_entries:
+            item_frame = ctk.CTkFrame(self.history_list_frame)
+            item_frame.pack(fill='x', padx=5, pady=5)
+
+            status = entry.get("status", "completed")
+            header = f"{entry.get('service', 'Unknown')} - {status.title()}"
+            finished_at = entry.get("finished_at")
+            if finished_at:
+                try:
+                    finished_display = datetime.datetime.fromisoformat(finished_at).strftime('%Y-%m-%d %H:%M:%S')
+                except ValueError:
+                    finished_display = finished_at
+                header += f"\n{finished_display}"
+
+            header_label = ctk.CTkLabel(item_frame, text=header, justify='left', anchor='w')
+            header_label.pack(fill='x', padx=5, pady=(5, 2))
+
+            url_value = entry.get("url") or "N/A"
+            url_display = url_value if len(url_value) <= 100 else f"{url_value[:97]}..."
+            url_label = ctk.CTkLabel(item_frame, text=url_display, justify='left', anchor='w', font=("Arial", 11))
+            url_label.pack(fill='x', padx=5, pady=(0, 2))
+
+            counts = entry.get("counts") or {}
+            duration_text = entry.get("duration_human") or entry.get("duration_seconds") or "N/A"
+            counts_text = self.tr(
+                "Completed {completed}/{total} • Skipped {skipped} • Failed {failed} • Duration {duration}").format(
+                completed=counts.get('completed', 0),
+                total=counts.get('total', 0),
+                skipped=counts.get('skipped', 0),
+                failed=counts.get('failed', 0),
+                duration=duration_text,
+            )
+            counts_label = ctk.CTkLabel(item_frame, text=counts_text, justify='left', anchor='w', font=("Arial", 11))
+            counts_label.pack(fill='x', padx=5, pady=(0, 5))
 
     # Clipboard operations
     def copy_to_clipboard(self):
@@ -1620,8 +2016,9 @@ class ImageDownloaderApp(ctk.CTk):
         self.action_frame.pack(pady=10, fill='x', padx=20)
         # self.log_textbox.pack_forget()
         # self.log_textbox.pack(pady=(10, 0), padx=20, fill='both', expand=True)
-        self.log_frame.pack_forget()
-        self.log_frame.pack(pady=(10, 0), padx=20, fill='both', expand=True)
+        if hasattr(self, "log_history_container"):
+            self.log_history_container.pack_forget()
+            self.log_history_container.pack(pady=(10, 0), padx=20, fill='both', expand=True)
         self.progress_frame.pack_forget()
         self.progress_frame.pack(pady=(0, 10), fill='x', padx=20)
 
