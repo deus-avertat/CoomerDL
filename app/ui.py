@@ -47,6 +47,10 @@ class PostSelectionDialog(ctk.CTkToplevel):
         self._checkbox_vars = {}
         self._confirmed = False
         self._result = []
+        self._post_dates = {}
+        self._available_years = []
+
+        years_set = set()
 
         header_text = tr(
             "{count} posts found for {service} / {user} on {site}",
@@ -69,6 +73,11 @@ class PostSelectionDialog(ctk.CTkToplevel):
                 published_display = published.replace("T", " ")
             else:
                 published_display = ""
+
+            parsed_date = self._parse_published_date(published)
+            self._post_dates[post_id] = parsed_date
+            if parsed_date is not None:
+                years_set.add(parsed_date.year)
 
             display_text = f"{title} (ID: {post_id})"
             if published_display:
@@ -103,6 +112,65 @@ class PostSelectionDialog(ctk.CTkToplevel):
         )
         deselect_all_button.pack(side="left")
 
+        date_filter_frame = ctk.CTkFrame(self)
+        date_filter_frame.pack(fill="x", padx=20, pady=(10, 10))
+
+        start_label = ctk.CTkLabel(date_filter_frame, text=tr("Start date (YYYY-MM-DD)"))
+        start_label.grid(row=0, column=0, padx=(0, 10), pady=(10, 5), sticky="w")
+        self.start_date_entry = ctk.CTkEntry(date_filter_frame, width=140)
+        self.start_date_entry.grid(row=0, column=1, padx=(0, 10), pady=(10, 5), sticky="w")
+
+        end_label = ctk.CTkLabel(date_filter_frame, text=tr("End date (YYYY-MM-DD)"))
+        end_label.grid(row=1, column=0, padx=(0, 10), pady=5, sticky="w")
+        self.end_date_entry = ctk.CTkEntry(date_filter_frame, width=140)
+        self.end_date_entry.grid(row=1, column=1, padx=(0, 10), pady=5, sticky="w")
+
+        filter_button = ctk.CTkButton(
+            date_filter_frame,
+            text=tr("Select by date range"),
+            command=self.select_by_date_range,
+            width=160,
+        )
+        filter_button.grid(row=0, column=2, rowspan=2, padx=(10, 0), pady=5, sticky="ew")
+
+        clear_filter_button = ctk.CTkButton(
+            date_filter_frame,
+            text=tr("Clear dates"),
+            command=self.clear_date_filters,
+            width=120,
+        )
+        clear_filter_button.grid(row=0, column=3, rowspan=2, padx=(10, 0), pady=5, sticky="ew")
+
+        date_filter_frame.grid_columnconfigure(2, weight=1)
+        date_filter_frame.grid_columnconfigure(3, weight=1)
+
+        self._available_years = sorted(years_set)
+        if self._available_years:
+            year_filter_frame = ctk.CTkFrame(self)
+            year_filter_frame.pack(fill="x", padx=20, pady=(0, 10))
+
+            year_label = ctk.CTkLabel(year_filter_frame, text=tr("Select by year"))
+            year_label.grid(row=0, column=0, padx=(0, 10), pady=10, sticky="w")
+
+            year_values = [str(year) for year in self._available_years]
+            self.year_combobox = ctk.CTkComboBox(
+                year_filter_frame,
+                values=year_values,
+                width=120,
+            )
+            self.year_combobox.set(year_values[-1])
+            self.year_combobox.grid(row=0, column=1, padx=(0, 10), pady=10, sticky="w")
+
+            select_year_button = ctk.CTkButton(
+                year_filter_frame,
+                text=tr("Select year"),
+                command=self.select_year,
+                width=140,
+            )
+            select_year_button.grid(row=0, column=2, padx=(0, 10), pady=10, sticky="ew")
+
+            year_filter_frame.grid_columnconfigure(2, weight=1)
+
         buttons_frame = ctk.CTkFrame(self, fg_color="transparent")
         buttons_frame.pack(fill="x", padx=20, pady=(0, 20))
 
@@ -128,6 +196,127 @@ class PostSelectionDialog(ctk.CTkToplevel):
         for var in self._checkbox_vars.values():
             var.set(False)
 
+    def select_by_date_range(self):
+        start_text = self.start_date_entry.get().strip()
+        end_text = self.end_date_entry.get().strip()
+
+        start_date = self._parse_date_input(start_text) if start_text else None
+        end_date = self._parse_date_input(end_text) if end_text else None
+
+        if start_text and start_date is None:
+            messagebox.showerror(
+                self._tr("Error"),
+                self._tr("Invalid start date. Use the YYYY-MM-DD format."),
+            )
+            return
+
+        if end_text and end_date is None:
+            messagebox.showerror(
+                self._tr("Error"),
+                self._tr("Invalid end date. Use the YYYY-MM-DD format."),
+            )
+            return
+
+        if start_date and end_date and start_date > end_date:
+            messagebox.showerror(
+                self._tr("Error"),
+                self._tr("Start date must be before end date."),
+            )
+            return
+
+        matched = False
+        for post_id, var in self._checkbox_vars.items():
+            published_date = self._post_dates.get(post_id)
+            if published_date is None:
+                var.set(False)
+                continue
+
+            if start_date and published_date < start_date:
+                var.set(False)
+                continue
+
+            if end_date and published_date > end_date:
+                var.set(False)
+                continue
+
+            var.set(True)
+            matched = True
+
+        if not matched:
+            messagebox.showinfo(
+                self._tr("Info"),
+                self._tr("No posts were found for the selected date range."),
+            )
+
+    def select_year(self):
+        if not hasattr(self, "year_combobox"):
+            return
+
+        try:
+            selected_year = int(self.year_combobox.get())
+        except (TypeError, ValueError):
+            messagebox.showerror(
+                self._tr("Error"),
+                self._tr("Invalid year selected."),
+            )
+            return
+
+        matched = False
+        for post_id, var in self._checkbox_vars.items():
+            published_date = self._post_dates.get(post_id)
+            if published_date is not None and published_date.year == selected_year:
+                var.set(True)
+                matched = True
+            else:
+                var.set(False)
+
+        if not matched:
+            messagebox.showinfo(
+                self._tr("Info"),
+                self._tr("No posts were found for the selected year."),
+            )
+
+    def clear_date_filters(self):
+        self.start_date_entry.delete(0, tk.END)
+        self.end_date_entry.delete(0, tk.END)
+
+    def _parse_date_input(self, value):
+        try:
+            return datetime.datetime.strptime(value, "%Y-%m-%d")
+        except ValueError:
+            return None
+
+    def _parse_published_date(self, published):
+        if not published:
+            return None
+
+        if isinstance(published, (int, float)):
+            try:
+                return datetime.datetime.fromtimestamp(published)
+            except (OverflowError, OSError, ValueError):
+                return None
+
+        if isinstance(published, str):
+            text = published.strip()
+            if not text:
+                return None
+
+            if text.endswith("Z"):
+                text = text[:-1] + "+00:00"
+
+            try:
+                return datetime.datetime.fromisoformat(text)
+            except ValueError:
+                pass
+
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+                try:
+                    return datetime.datetime.strptime(text, fmt)
+                except ValueError:
+                    continue
+
+        return None
+
     def on_confirm(self):
         selected = [post_id for post_id, var in self._checkbox_vars.items() if var.get()]
         if not selected:
@@ -152,8 +341,8 @@ def extract_ck_parameters(url: ParseResult) -> tuple[Optional[str], Optional[str
     """
     match = re.search(r"/(?P<service>[^/?]+)(/user/(?P<user>[^/?]+)(/post/(?P<post>[^/?]+))?)?", url.path)
     if match:
-        [site, service, post] = match.group("service", "user", "post")
-        return site, service, post
+        service, user, post = match.group("service", "user", "post")
+        return service, user, post
     else:
         return None, None, None
 
