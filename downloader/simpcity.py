@@ -16,7 +16,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from concurrent.futures import ThreadPoolExecutor
 
 class SimpCity:
-    def __init__(self, download_folder, max_workers=5, log_callback=None, enable_widgets_callback=None, update_progress_callback=None, update_global_progress_callback=None, tr=None):
+    def __init__(self, download_folder, max_workers=5, log_callback=None, enable_widgets_callback=None, update_progress_callback=None, update_global_progress_callback=None, tr=None, request_timeout=20):
         self.download_folder = download_folder
         self.max_workers = max_workers
         self.descargadas = set()
@@ -46,6 +46,12 @@ class SimpCity:
         self.attachments_block_selector = "section[class=message-attachments]"
         self.attachments_selector = "a"
         self.next_page_selector = "a[class*=pageNav-jump--next]"
+        try:
+            self.request_timeout = float(request_timeout)
+        except (TypeError, ValueError):
+            self.request_timeout = 20.0
+        if self.request_timeout <= 0:
+            self.request_timeout = 0.1
 
     def log(self, message):
         if self.log_callback:
@@ -139,7 +145,7 @@ class SimpCity:
         try:
             cookies = self.get_cookies_with_selenium(url)
             self.set_cookies_in_scraper(cookies)
-            response = self.scraper.get(url)
+            response = self.scraper.get(url, timeout=self.request_timeout)
             if response.status_code == 200:
                 return BeautifulSoup(response.content, 'html.parser')
             else:
@@ -153,7 +159,7 @@ class SimpCity:
         if self.cancel_requested or not self.wait_if_paused():
             return
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        response = self.scraper.get(file_url, stream=True)
+        response = self.scraper.get(file_url, stream=True, timeout=self.request_timeout)
         if response.status_code == 200:
             with open(path, 'wb') as file:
                 for chunk in response.iter_content(1024):

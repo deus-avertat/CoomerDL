@@ -435,12 +435,21 @@ class SettingsWindow:
         retry_interval_entry.insert(0, str(self.settings.get('retry_interval', 2.0)))
         retry_interval_entry.grid(row=5, column=1, pady=5, padx=(10, 0), sticky="w")
 
+        # ----------------------------
+        # HTTP timeout
+        # ----------------------------
+        http_timeout_label = ctk.CTkLabel(downloads_frame, text=self.translate("HTTP Timeout (seconds)"))
+        http_timeout_label.grid(row=6, column=0, pady=5, sticky="w")
+
+        http_timeout_entry = ctk.CTkEntry(downloads_frame, width=80)
+        http_timeout_entry.insert(0, str(self.settings.get('http_timeout', 20.0)))
+        http_timeout_entry.grid(row=6, column=1, pady=5, padx=(10, 0), sticky="w")
 
         # ----------------------------
         # File naming mode
         # ----------------------------
         naming_label = ctk.CTkLabel(downloads_frame, text=self.translate("File Naming Mode"))
-        naming_label.grid(row=6, column=0, pady=5, sticky="w")
+        naming_label.grid(row=7, column=0, pady=5, sticky="w")
 
         naming_options = [
             "Use File ID (default)",
@@ -473,7 +482,7 @@ class SettingsWindow:
             else:
                 file_naming_combobox.set(naming_options[0])
 
-        file_naming_combobox.grid(row=6, column=1, pady=5, padx=(10, 0), sticky="w")
+        file_naming_combobox.grid(row=7, column=1, pady=5, padx=(10, 0), sticky="w")
 
 
         # ----------------------------
@@ -487,10 +496,11 @@ class SettingsWindow:
                 folder_structure_combobox,
                 retry_combobox,
                 retry_interval_entry,
+                http_timeout_entry,
                 file_naming_combobox
             )
         )
-        apply_download_button.grid(row=7, column=1, pady=10, sticky="e")
+        apply_download_button.grid(row=8, column=1, pady=10, sticky="e")
 
 
 
@@ -576,7 +586,7 @@ class SettingsWindow:
             except Exception as e:
                 messagebox.showerror(self.translate("Error"), self.translate(f"Error clearing database: {e}"))
 
-    def apply_download_settings(self,max_downloads_combobox,folder_structure_combobox,retry_combobox,retry_interval_entry,file_naming_combobox):
+    def apply_download_settings(self,max_downloads_combobox,folder_structure_combobox,retry_combobox,retry_interval_entry,http_timeout_entry,file_naming_combobox):
         try:
 
             max_downloads = int(max_downloads_combobox.get())
@@ -584,6 +594,9 @@ class SettingsWindow:
             max_retries = int(retry_combobox.get())
             max_retries = max(0, min(max_retries, 5))
             retry_interval = float(retry_interval_entry.get())
+            http_timeout = float(http_timeout_entry.get())
+            if http_timeout <= 0:
+                raise ValueError("Timeout must be positive")
 
             file_naming_mode_str = file_naming_combobox.get()
 
@@ -600,6 +613,7 @@ class SettingsWindow:
             self.settings['folder_structure'] = folder_structure
             self.settings['max_retries'] = max_retries
             self.settings['retry_interval'] = retry_interval
+            self.settings['http_timeout'] = http_timeout
             self.settings['file_naming_mode'] = numeric_mode
 
             self.save_settings()
@@ -614,6 +628,10 @@ class SettingsWindow:
                     self.downloader.retry_interval = retry_interval
 
                 self.downloader.file_naming_mode = numeric_mode
+                if hasattr(self.downloader, "set_stream_timeout"):
+                    self.downloader.set_stream_timeout(http_timeout)
+                else:
+                    self.downloader.stream_read_timeout = http_timeout
 
 
             messagebox.showinfo(

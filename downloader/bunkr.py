@@ -10,7 +10,7 @@ import re
 import threading
 
 class BunkrDownloader:
-    def __init__(self, download_folder, log_callback=None, enable_widgets_callback=None, update_progress_callback=None, update_global_progress_callback=None, headers=None, max_workers=5, translations=None):
+    def __init__(self, download_folder, log_callback=None, enable_widgets_callback=None, update_progress_callback=None, update_global_progress_callback=None, headers=None, max_workers=5, translations=None, request_timeout=20):
         self.download_folder = download_folder
         self.log_callback = log_callback
         self.enable_widgets_callback = enable_widgets_callback
@@ -36,7 +36,13 @@ class BunkrDownloader:
         self.log_messages = []  # Cola para almacenar mensajes de log
         self.notification_interval = 10  # Intervalo de notificación en segundos
         self.start_notification_thread()
-        self.translations = translations or {}  
+        self.translations = translations or {}
+        try:
+            self.request_timeout = float(request_timeout)
+        except (TypeError, ValueError):
+            self.request_timeout = 20.0
+        if self.request_timeout <= 0:
+            self.request_timeout = 0.1
 
     def start_notification_thread(self):
         def notify_user():
@@ -148,10 +154,16 @@ class BunkrDownloader:
 
         max_attempts = 3
         delay = 1
+        response = None
         for attempt in range(max_attempts):
             try:
                 self.log(f"Intentando descargar {url_media} (Intento {attempt + 1}/{max_attempts})")
-                response = self.session.get(url_media, headers=self.headers, stream=True)
+                response = self.session.get(
+                    url_media,
+                    headers=self.headers,
+                    stream=True,
+                    timeout=self.request_timeout,
+                )
                 response.raise_for_status()
                 
                 total_size = int(response.headers.get('content-length', 0))
@@ -184,7 +196,8 @@ class BunkrDownloader:
                     self.update_global_progress_callback(self.completed_files, self.total_files)
                 break
             except requests.RequestException as e:
-                if response.status_code == 429:
+                status_code = getattr(response, "status_code", None)
+                if status_code == 429:
                     self.log(f"Límite de tasa excedido. Reintentando después de {delay} segundos.")
                     time.sleep(delay)
                     delay *= 2  # Retroceso exponencial para limitación de tasa
@@ -201,7 +214,11 @@ class BunkrDownloader:
             if '/f/' in url_post:
                 self.log("Detectado URL tipo '/f/'. Procediendo a extraer el enlace intermedio.")
                 # Paso 1: Accedemos a la URL original para obtener el primer enlace (intermedio)
-                response = self.session.get(url_post, headers=self.headers)
+                response = self.session.get(
+                    url_post,
+                    headers=self.headers,
+                    timeout=self.request_timeout,
+                )
                 if response.status_code != 200:
                     self.log(f"Error al acceder al post {url_post}: Estado {response.status_code}")
                     return
@@ -219,7 +236,11 @@ class BunkrDownloader:
                 self.log(f"Enlace intermedio encontrado: {intermediate_url}")
 
                 # Paso 2: Accedemos a la URL intermedia para extraer el enlace final de descarga
-                intermediate_response = self.session.get(intermediate_url, headers=self.headers)
+                intermediate_response = self.session.get(
+                    intermediate_url,
+                    headers=self.headers,
+                    timeout=self.request_timeout,
+                )
                 if intermediate_response.status_code != 200:
                     self.log(f"Error al acceder a la URL intermedia: {intermediate_url} (Estado {intermediate_response.status_code})")
                     return
@@ -253,7 +274,11 @@ class BunkrDownloader:
             else:
                 # Lógica original para posts que contienen imágenes y videos
 
-                response = self.session.get(url_post, headers=self.headers)
+                response = self.session.get(
+                    url_post,
+                    headers=self.headers,
+                    timeout=self.request_timeout,
+                )
                 if response.status_code != 200:
                     self.log(f"Error al acceder al post {url_post}: Estado {response.status_code}")
                     return
@@ -295,7 +320,11 @@ class BunkrDownloader:
                     if download_page_link and 'href' in download_page_link.attrs:
                         video_page_url = download_page_link['href']
                         self.log(f"URL de la página de descarga encontrada: {video_page_url}. Accediendo ahora.")
-                        video_page_response = self.session.get(video_page_url, headers=self.headers)
+                        video_page_response = self.session.get(
+                            video_page_url,
+                            headers=self.headers,
+                            timeout=self.request_timeout,
+                        )
                         self.log(f"Estado de la respuesta de la página de video: {video_page_response.status_code} para {video_page_url}")
 
                         if video_page_response.status_code == 200:
@@ -338,7 +367,11 @@ class BunkrDownloader:
     def descargar_perfil_bunkr(self, url_perfil):
         try:
             self.log(f"Iniciando descarga para el perfil: {url_perfil}")
-            response = self.session.get(url_perfil, headers=self.headers)
+            response = self.session.get(
+                url_perfil,
+                headers=self.headers,
+                timeout=self.request_timeout,
+            )
             self.log(f"Código de estado de la respuesta: {response.status_code} para {url_perfil}")
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, 'html.parser')
@@ -371,7 +404,11 @@ class BunkrDownloader:
                         self.log(f"Processing media page URL: {image_page_url}")
 
                         # Visit the page to get the media URL
-                        image_response = self.session.get(image_page_url, headers=self.headers)
+                        image_response = self.session.get(
+                            image_page_url,
+                            headers=self.headers,
+                            timeout=self.request_timeout,
+                        )
                         if image_response.status_code == 200:
                             image_soup = BeautifulSoup(image_response.text, 'html.parser')
 

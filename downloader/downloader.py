@@ -65,7 +65,13 @@ class Downloader:
 		self.post_attachment_counter = defaultdict(int)
 		self.subdomain_cache = {}
 		self.subdomain_locks = defaultdict(threading.Lock)
-		self.stream_read_timeout = stream_read_timeout
+		try:
+			self.stream_read_timeout = float(stream_read_timeout)
+		except (TypeError, ValueError):
+			self.stream_read_timeout = 20.0
+		if self.stream_read_timeout <= 0:
+			self.stream_read_timeout = 0.1
+		self.request_timeout = self.stream_read_timeout
 		self.partial_update_interval = 5.0
 
 		self.config_dir = config_dir or os.path.join("resources", "config")
@@ -234,6 +240,16 @@ class Downloader:
 		self.max_retries = max(0, max_retries)
 		self.retry_interval = retry_interval
 
+	def set_stream_timeout(self, timeout):
+		try:
+			timeout = float(timeout)
+		except (TypeError, ValueError):
+			return
+		if timeout <= 0:
+			timeout = 0.1
+		self.stream_read_timeout = timeout
+		self.request_timeout = timeout
+
 	def request_cancel(self):
 		self.cancel_requested.set()
 		self.pause_event.set()
@@ -308,8 +324,13 @@ class Downloader:
 							if self.update_progress_callback:
 								self.update_progress_callback(0, 0, status=f"Subdomain found: {found}")
 
-							
-							response = self.session.get(alt_url, stream=True, headers=headers)
+
+							response = self.session.get(
+								alt_url,
+								stream=True,
+								headers=headers,
+								timeout=self.stream_read_timeout,
+							)
 							response.raise_for_status()
 							return response
 						else:
@@ -429,8 +450,12 @@ class Downloader:
 			if log_fetching:
 				self.log(self.tr("Fetching user posts from {api_url}", api_url=api_url))
 			try:
-				
-				response = self.session.get(api_url, headers=self.headers)
+
+				response = self.session.get(
+					api_url,
+					headers=self.headers,
+					timeout=self.stream_read_timeout,
+				)
 				response.raise_for_status()
 				try:
 					posts_data = response.json()
@@ -780,7 +805,11 @@ class Downloader:
 
 	def get_remote_file_size(self, media_url, filename):
 		try:
-			response = requests.head(media_url, allow_redirects=True)
+			response = requests.head(
+				media_url,
+				allow_redirects=True,
+				timeout=self.stream_read_timeout,
+			)
 			if response.status_code == 200:
 				size = int(response.headers.get('Content-Length', 0))
 				return media_url, filename, size
@@ -927,7 +956,11 @@ class Downloader:
 		self.log(self.tr(f"Fetching post from {api_url}"))
 		try:
 			with self.rate_limit:
-				response = self.session.get(api_url, headers=self.headers)
+				response = self.session.get(
+					api_url,
+					headers=self.headers,
+					timeout=self.stream_read_timeout,
+				)
 			response.raise_for_status()
 			return response.json()
 		except Exception as e:

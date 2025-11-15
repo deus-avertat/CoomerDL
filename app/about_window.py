@@ -5,15 +5,21 @@ import requests
 from PIL import Image
 
 class AboutWindow:
-    def __init__(self, parent, translate, version):
+    def __init__(self, parent, translate, version, request_timeout=5.0):
         self.parent = parent
         self.translate = translate
         self.version = version
+        try:
+            self.request_timeout = float(request_timeout)
+        except (TypeError, ValueError):
+            self.request_timeout = 5.0
+        if self.request_timeout <= 0:
+            self.request_timeout = 0.1
 
     def get_github_data(self):
         url = "https://api.github.com/repos/Emy69/CoomerDL"
         try:
-            response = requests.get(url)
+            response = requests.get(url, timeout=self.request_timeout)
             response.raise_for_status()
             repo_data = response.json()
 
@@ -22,7 +28,7 @@ class AboutWindow:
             created_date = created_at.split("T")[0] if created_at != "N/A" else "N/A"
 
             releases_url = repo_data.get("releases_url", "").replace("{/id}", "")
-            releases_response = requests.get(releases_url)
+            releases_response = requests.get(releases_url, timeout=self.request_timeout)
             releases_response.raise_for_status()
             releases_data = releases_response.json()
 

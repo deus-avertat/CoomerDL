@@ -14,7 +14,7 @@ from requests.exceptions import ChunkedEncodingError
 from tkinter import messagebox, simpledialog
 
 class EromeDownloader:
-    def __init__(self, root, log_callback=None, enable_widgets_callback=None, update_progress_callback=None, update_global_progress_callback=None, download_images=True, download_videos=True, headers=None, language="en", is_profile_download=False, direct_download=False, tr=None, max_workers=5):
+    def __init__(self, root, log_callback=None, enable_widgets_callback=None, update_progress_callback=None, update_global_progress_callback=None, download_images=True, download_videos=True, headers=None, language="en", is_profile_download=False, direct_download=False, tr=None, max_workers=5, request_timeout=20):
         self.root = root
         self.session = requests.Session()
         self.headers = {k: str(v).encode('ascii', 'ignore').decode('ascii') for k, v in (headers or {
@@ -40,6 +40,12 @@ class EromeDownloader:
         self.is_profile_download = is_profile_download
         self.direct_download = direct_download  # Option for direct downloads without folder creation
         self.tr = tr if tr else lambda x, **kwargs: x.format(**kwargs)  # Translation function
+        try:
+            self.request_timeout = float(request_timeout)
+        except (TypeError, ValueError):
+            self.request_timeout = 20.0
+        if self.request_timeout <= 0:
+            self.request_timeout = 0.1
 
     def request_cancel(self):
         self.cancel_requested = True
@@ -145,8 +151,12 @@ class EromeDownloader:
         retries = 0
         while retries <= max_retries:
             try:
-                with requests.get(url, headers=self.headers,
-                                  stream=True, timeout=15) as response:
+                with self.session.get(
+                        url,
+                        headers=self.headers,
+                        stream=True,
+                        timeout=self.request_timeout,
+                ) as response:
                     if response.status_code != 200:
                         self.log(self.tr("Error downloading {resource_type}, "
                                          "status code: {status_code}",
@@ -239,7 +249,11 @@ class EromeDownloader:
             if self.cancel_requested:
                 return
             self.log(self.tr("Processing album URL: {page_url}", page_url=page_url))
-            response = requests.get(page_url, headers=self.headers)
+            response = self.session.get(
+                page_url,
+                headers=self.headers,
+                timeout=self.request_timeout,
+            )
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, 'html.parser')
                 if not self.direct_download:
@@ -310,7 +324,11 @@ class EromeDownloader:
             if self.cancel_requested:
                 return
             self.log(self.tr("Processing profile URL: {url}", url=url))
-            response = requests.get(url, headers=self.headers)
+            response = self.session.get(
+                url,
+                headers=self.headers,
+                timeout=self.request_timeout,
+            )
             if response.status_code == 200:
                 soup = BeautifulSoup(response.text, 'html.parser')
                 username = soup.find('h1', class_='username').text.strip() if soup.find('h1', class_='username') else self.tr("Unknown Profile")

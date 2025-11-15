@@ -8,10 +8,16 @@ class PatchNotes:
     WINDOW_WIDTH = 900
     WINDOW_HEIGHT = 800
 
-    def __init__(self, parent, translations_func):
+    def __init__(self, parent, translations_func, request_timeout=5.0):
         self.parent = parent
         self.tr = translations_func
         self.patch_notes_window = None
+        try:
+            self.request_timeout = float(request_timeout)
+        except (TypeError, ValueError):
+            self.request_timeout = 5.0
+        if self.request_timeout <= 0:
+            self.request_timeout = 0.1
 
     def show_patch_notes(self):
         # Cerrar la ventana si ya existe
@@ -57,10 +63,9 @@ class PatchNotes:
         ok_button = ctk.CTkButton(bottom_frame, text=self.tr("OK"), command=lambda: self.close_patch_notes(dont_show_again_var))
         ok_button.pack(side="right", padx=5)
 
-    @staticmethod
-    def get_latest_github_release(repo_owner, repo_name):
+    def get_latest_github_release(self, repo_owner, repo_name):
         url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/releases/latest"
-        response = requests.get(url)
+        response = requests.get(url, timeout=self.request_timeout)
         if response.status_code == 200:
             return response.json()
         else:

@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from app import progress_manager
 
 class Jpg5Downloader:
-    def __init__(self, url, carpeta_destino, progress_manager, log_callback=None, tr=None, update_progress_callback=None, update_global_progress_callback=None, max_workers=3):
+    def __init__(self, url, carpeta_destino, progress_manager, log_callback=None, tr=None, update_progress_callback=None, update_global_progress_callback=None, max_workers=3, request_timeout=20):
         self.url = url
         self.carpeta_destino = carpeta_destino
         self.log_callback = log_callback
@@ -21,6 +21,12 @@ class Jpg5Downloader:
         self.update_global_progress_callback = update_global_progress_callback
         self.max_workers = max_workers
         self.progress_manager = progress_manager
+        try:
+            self.request_timeout = float(request_timeout)
+        except (TypeError, ValueError):
+            self.request_timeout = 20.0
+        if self.request_timeout <= 0:
+            self.request_timeout = 0.1
 
     def log(self, message):
         if self.log_callback:
@@ -70,7 +76,7 @@ class Jpg5Downloader:
             os.makedirs(self.carpeta_destino)
 
         self.log(self.tr(f"Iniciando descarga desde: {self.url}"))
-        respuesta = requests.get(self.url)
+        respuesta = requests.get(self.url, timeout=self.request_timeout)
         if self.cancel_requested.is_set():
             self.log(self.tr("Descarga cancelada por el usuario."))
             return
@@ -111,7 +117,7 @@ class Jpg5Downloader:
             media_url = enlace['href']
             self.log(self.tr(f"Procesando enlace: {media_url}"))
 
-            media_respuesta = requests.get(media_url)
+            media_respuesta = requests.get(media_url, timeout=self.request_timeout)
             if self.cancel_requested.is_set():
                 self.log(self.tr("Descarga cancelada por el usuario."))
                 return
@@ -127,11 +133,15 @@ class Jpg5Downloader:
                     descarga_url = btn_descarga['href']
                     self.log(self.tr(f"Descargando desde: {descarga_url}"))
 
-                    img_respuesta = requests.get(descarga_url, stream=True)
+                    img_respuesta = requests.get(
+                        descarga_url,
+                        stream=True,
+                        timeout=self.request_timeout,
+                    )
                     if self.cancel_requested.is_set():
                         self.log(self.tr("Descarga cancelada por el usuario."))
                         return
-                    if not not self.wait_if_paused():
+                    if not self.wait_if_paused():
                         return
 
                     img_nombre = os.path.basename(descarga_url)
