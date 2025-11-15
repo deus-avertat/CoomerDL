@@ -10,12 +10,13 @@ import time
 import sqlite3
 
 class Downloader:
-	def __init__(self, download_folder, max_workers=5, log_callback=None, 
-				enable_widgets_callback=None, update_progress_callback=None, 
-				update_global_progress_callback=None, headers=None,
-				max_retries=999999, retry_interval=1.0, stream_read_timeout=20,
-				download_images=True, download_videos=True, download_compressed=True, 
-				tr=None, folder_structure='default', rate_limit_interval=1.0):
+	def __init__(self, download_folder, max_workers=5, log_callback=None,
+				 enable_widgets_callback=None, update_progress_callback=None,
+				 update_global_progress_callback=None, headers=None,
+				 max_retries=5, retry_interval=1.0, stream_read_timeout=20,
+				 download_images=True, download_videos=True, download_compressed=True,
+				 tr=None, folder_structure='default', rate_limit_interval=1.0,
+				 config_dir=None):
 		
 		self.download_folder = download_folder
 		self.log_callback = log_callback
@@ -67,10 +68,9 @@ class Downloader:
 		self.stream_read_timeout = stream_read_timeout
 		self.partial_update_interval = 5.0
 
-		
-		db_folder = os.path.join("resources", "config")
-		os.makedirs(db_folder, exist_ok=True)  
-		self.db_path = os.path.join(db_folder, "downloads.db")
+		self.config_dir = config_dir or os.path.join("resources", "config")
+		os.makedirs(self.config_dir, exist_ok=True)
+		self.db_path = os.path.join(self.config_dir, "downloads.db")
 		self.db_lock = threading.Lock()  
 		self.init_db()
 		self.load_download_cache()
@@ -227,7 +227,11 @@ class Downloader:
 		self.log(f"Updated download mode to {mode} with max_workers = {max_workers}")
 	
 	def set_retry_settings(self, max_retries, retry_interval):
-		self.max_retries = max_retries
+		try:
+			max_retries = int(max_retries)
+		except (TypeError, ValueError):
+			max_retries = self.max_retries
+		self.max_retries = max(0, max_retries)
 		self.retry_interval = retry_interval
 
 	def request_cancel(self):

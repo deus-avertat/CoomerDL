@@ -529,7 +529,13 @@ class ImageDownloaderApp(ctk.CTk):
         
         # Load all settings with defaults from the settings object
         self.max_downloads = self.settings.get('max_downloads', 3)
-        max_retries_setting = self.settings.get('max_retries', 3)
+        max_retries_setting = self.settings.get('max_retries', 5)
+        if not isinstance(max_retries_setting, int):
+            try:
+                max_retries_setting = int(max_retries_setting)
+            except (TypeError, ValueError):
+                max_retries_setting = 5
+        max_retries_setting = max(0, min(max_retries_setting, 5))
         retry_interval_setting = self.settings.get('retry_interval', 2.0)
         folder_structure_setting = self.settings.get('folder_structure', 'default')
         

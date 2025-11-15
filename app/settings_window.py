@@ -407,13 +407,21 @@ class SettingsWindow:
         retry_label = ctk.CTkLabel(downloads_frame, text=self.translate("Max Retries"))
         retry_label.grid(row=4, column=0, pady=5, sticky="w")
 
+        retry_values = [str(i) for i in range(0, 6)]
         retry_combobox = ctk.CTkComboBox(
             downloads_frame,
-            values=[str(i) for i in range(0, 11)] + ['999999'],
+            values=retry_values,
             state='readonly',
             width=80
         )
-        retry_combobox.set(str(self.settings.get('max_retries', 3)))
+        stored_retries = self.settings.get('max_retries', 5)
+        if not isinstance(stored_retries, int):
+            try:
+                stored_retries = int(stored_retries)
+            except (TypeError, ValueError):
+                stored_retries = 5
+        stored_retries = max(0, min(stored_retries, 5))
+        retry_combobox.set(str(stored_retries))
         retry_combobox.grid(row=4, column=1, pady=5, padx=(10, 0), sticky="w")
 
 
@@ -574,6 +582,7 @@ class SettingsWindow:
             max_downloads = int(max_downloads_combobox.get())
             folder_structure = folder_structure_combobox.get()
             max_retries = int(retry_combobox.get())
+            max_retries = max(0, min(max_retries, 5))
             retry_interval = float(retry_interval_entry.get())
 
             file_naming_mode_str = file_naming_combobox.get()

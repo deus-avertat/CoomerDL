@@ -23,6 +23,7 @@ If you find this tool helpful, please consider supporting my efforts:
 - **Multithreaded Downloads**: Boosts download speed by utilizing multiple threads.
 - **Progress Feedback**: Real-time progress updates during downloads.
 - **Queue Management**: Efficiently handles large download queues.
+- **Fail-fast Retries**: Downloads retry up to five times (six total attempts) by default before failing, and the limit can be adjusted in the Settings panel.
 
 **Supported File Extensions**:
 - **Videos**: `.mp4`, `.mkv`, `.webm`, `.mov`, `.avi`, `.flv`, `.wmv`, `.m4v`
