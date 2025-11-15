@@ -15,6 +15,54 @@
         "ru": "Включить предварительный выбор постов",
         "zh": "启用预检帖子选择"
     },
+    "Keyword filter": {
+        "es": "Filtro por palabras clave",
+        "en": "Keyword filter",
+        "fr": "Filtre par mots-clés",
+        "ja": "キーワードフィルター",
+        "ru": "Фильтр по ключевым словам",
+        "zh": "关键字筛选"
+    },
+    "Match all keywords": {
+        "es": "Coincidir con todas las palabras clave",
+        "en": "Match all keywords",
+        "fr": "Correspondre à tous les mots-clés",
+        "ja": "すべてのキーワードに一致",
+        "ru": "Совпадение со всеми ключевыми словами",
+        "zh": "匹配所有关键字"
+    },
+    "Filter by keywords": {
+        "es": "Filtrar por palabras clave",
+        "en": "Filter by keywords",
+        "fr": "Filtrer par mots-clés",
+        "ja": "キーワードでフィルター",
+        "ru": "Фильтровать по ключевым словам",
+        "zh": "按关键字筛选"
+    },
+    "Clear keywords": {
+        "es": "Limpiar palabras clave",
+        "en": "Clear keywords",
+        "fr": "Effacer les mots-clés",
+        "ja": "キーワードをクリア",
+        "ru": "Очистить ключевые слова",
+        "zh": "清除关键字"
+    },
+    "Please enter at least one keyword.": {
+        "es": "Introduce al menos una palabra clave.",
+        "en": "Please enter at least one keyword.",
+        "fr": "Veuillez saisir au moins un mot-clé.",
+        "ja": "少なくとも1つのキーワードを入力してください。",
+        "ru": "Введите хотя бы одно ключевое слово.",
+        "zh": "请至少输入一个关键字。"
+    },
+    "No posts matched the provided keywords.": {
+        "es": "Ninguna publicación coincide con las palabras clave proporcionadas.",
+        "en": "No posts matched the provided keywords.",
+        "fr": "Aucun message ne correspond aux mots-clés fournis.",
+        "ja": "指定されたキーワードに一致する投稿はありません。",
+        "ru": "Нет постов, соответствующих указанным ключевым словам.",
+        "zh": "没有帖子符合提供的关键字。"
+    },
     "Descarga cancelada por el usuario.": {
         "es": "Descarga cancelada por el usuario.",
         "en": "Download canceled by the user.",

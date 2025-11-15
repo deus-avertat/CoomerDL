@@ -50,6 +50,7 @@ class PostSelectionDialog(ctk.CTkToplevel):
         self._result = []
         self._post_dates = {}
         self._available_years = []
+        self._post_search_texts = {}
 
         years_set = set()
 
@@ -79,6 +80,15 @@ class PostSelectionDialog(ctk.CTkToplevel):
             self._post_dates[post_id] = parsed_date
             if parsed_date is not None:
                 years_set.add(parsed_date.year)
+
+            search_fragments = [str(post_id), title or ""]
+            content = post.get("content")
+            if isinstance(content, str):
+                search_fragments.append(content)
+            tags = post.get("tags")
+            if isinstance(tags, (list, tuple)):
+                search_fragments.extend(str(tag) for tag in tags if tag)
+            self._post_search_texts[post_id] = " ".join(filter(None, search_fragments)).lower()
 
             display_text = f"{title} (ID: {post_id})"
             if published_display:
@@ -112,6 +122,45 @@ class PostSelectionDialog(ctk.CTkToplevel):
             command=self.deselect_all,
         )
         deselect_all_button.pack(side="left")
+
+        keyword_filter_frame = ctk.CTkFrame(self)
+        keyword_filter_frame.pack(fill="x", padx=20, pady=(0, 10))
+
+        keyword_label = ctk.CTkLabel(keyword_filter_frame, text=tr("Keyword filter"))
+        keyword_label.grid(row=0, column=0, padx=(0, 10), pady=(10, 5), sticky="w")
+
+        self.keyword_entry = ctk.CTkEntry(keyword_filter_frame)
+        self.keyword_entry.grid(row=0, column=1, padx=(0, 10), pady=(10, 5), sticky="ew")
+
+        self.keyword_match_all = tk.BooleanVar(value=False)
+        match_all_checkbox = ctk.CTkCheckBox(
+            keyword_filter_frame,
+            text=tr("Match all keywords"),
+            variable=self.keyword_match_all,
+            onvalue=True,
+            offvalue=False,
+        )
+        match_all_checkbox.grid(row=0, column=2, padx=(0, 10), pady=(10, 5), sticky="w")
+
+        keyword_filter_button = ctk.CTkButton(
+            keyword_filter_frame,
+            text=tr("Filter by keywords"),
+            command=self.select_by_keywords,
+            width=160,
+        )
+        keyword_filter_button.grid(row=0, column=3, padx=(0, 10), pady=(10, 5), sticky="ew")
+
+        clear_keyword_button = ctk.CTkButton(
+            keyword_filter_frame,
+            text=tr("Clear keywords"),
+            command=self.clear_keyword_filter,
+            width=140,
+        )
+        clear_keyword_button.grid(row=0, column=4, padx=(0, 10), pady=(10, 5), sticky="ew")
+
+        keyword_filter_frame.grid_columnconfigure(1, weight=1)
+        keyword_filter_frame.grid_columnconfigure(3, weight=1)
+        keyword_filter_frame.grid_columnconfigure(4, weight=1)
 
         date_filter_frame = ctk.CTkFrame(self)
         date_filter_frame.pack(fill="x", padx=20, pady=(10, 10))
@@ -280,6 +329,51 @@ class PostSelectionDialog(ctk.CTkToplevel):
     def clear_date_filters(self):
         self.start_date_entry.delete(0, tk.END)
         self.end_date_entry.delete(0, tk.END)
+
+    def select_by_keywords(self):
+        keywords_text = self.keyword_entry.get().strip()
+        if not keywords_text:
+            messagebox.showinfo(
+                self._tr("Info"),
+                self._tr("Please enter at least one keyword."),
+            )
+            return
+
+        keywords = [kw.strip().lower() for kw in re.split(r"[,\n]+", keywords_text) if kw.strip()]
+        if not keywords:
+            messagebox.showinfo(
+                self._tr("Info"),
+                self._tr("Please enter at least one keyword."),
+            )
+            return
+
+        match_all = bool(self.keyword_match_all.get())
+        matched = False
+        for post_id, var in self._checkbox_vars.items():
+            haystack = self._post_search_texts.get(post_id, "")
+            if not haystack:
+                var.set(False)
+                continue
+
+            if match_all:
+                is_match = all(keyword in haystack for keyword in keywords)
+            else:
+                is_match = any(keyword in haystack for keyword in keywords)
+
+            var.set(is_match)
+            if is_match:
+                matched = True
+
+        if not matched:
+            messagebox.showinfo(
+                self._tr("Info"),
+                self._tr("No posts matched the provided keywords."),
+            )
+
+    def clear_keyword_filter(self):
+        self.keyword_entry.delete(0, tk.END)
+        self.keyword_match_all.set(False)
+        self.select_all()
 
     def _parse_date_input(self, value):
         try:
