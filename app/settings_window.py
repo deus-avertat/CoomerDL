@@ -598,8 +598,11 @@ class SettingsWindow:
             if self.downloader:
                 self.downloader.update_max_downloads(max_downloads)
 
-                self.downloader.max_retries = max_retries
-                self.downloader.retry_interval = retry_interval
+                if hasattr(self.downloader, "set_retry_settings"):
+                    self.downloader.set_retry_settings(max_retries, retry_interval)
+                else:
+                    self.downloader.max_retries = max_retries
+                    self.downloader.retry_interval = retry_interval
 
                 self.downloader.file_naming_mode = numeric_mode
 
