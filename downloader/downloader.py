@@ -251,6 +251,15 @@ class Downloader:
 				self.enable_widgets_callback()
 			self.log(self.tr("All downloads completed or cancelled."))
 
+	def _log_retry(self, attempt, max_retries, template, **kwargs):
+		template_text = self.tr(template) if self.tr else template
+		message = template_text.format(
+			attempt=attempt + 1,
+			max_retries_val=max_retries + 1,
+			**kwargs,
+		)
+		self.log(message)
+
 	def safe_request(self, url, max_retries=None, headers=None):
 		if max_retries is None:
 			max_retries = self.max_retries
@@ -309,28 +318,47 @@ class Downloader:
 
 				except requests.exceptions.RequestException as e:
 					status_code = getattr(e.response, 'status_code', None)
+
+					if isinstance(e, requests.exceptions.ReadTimeout):
+						self._log_retry(
+							attempt,
+							max_retries,
+							"Intento {attempt}/{max_retries_val}: Read timeout ({stream_timeout}s) - Reintentando...",
+							stream_timeout=self.stream_read_timeout,
+						)
+						if attempt < max_retries:
+							time.sleep(self.retry_interval)
+						continue
+
 					if status_code in (429, 500, 502, 503, 504):
-						self.log(log_message)
-						time.sleep(self.retry_interval)
+						self._log_retry(
+							attempt,
+							max_retries,
+							"Attempt {attempt}/{max_retries_val}: Error {status_code} - Retrying...",
+							status_code=status_code,
+						)
+						if attempt < max_retries:
+							time.sleep(self.retry_interval)
 					elif status_code not in (403, 404):
 						url_display = getattr(e.request, 'url', url)
 						if len(url_display) > 60:
 							url_display = url_display[:60] + "..."
-						self.log(self.tr("Intento {attempt}/{max_retries_val}: Error al acceder a {url} - {error}").format(
-							attempt=attempt + 1, max_retries_val=max_retries + 1, url=url_display, error=e))
-						if attempt < max_retries: 
+						self._log_retry(
+							attempt,
+							max_retries,
+							"Attempt {attempt}/{max_retries_val}: Error accessing {url} - {error}",
+							url=url_display,
+							error=e,
+						)
+						if attempt < max_retries:
 							time.sleep(self.retry_interval)
 					else:
-						if isinstance(e, requests.exceptions.ReadTimeout):
-							self.log(self.tr("Intento {attempt}/{max_retries_val}: Read timeout ({stream_timeout}s) - Reintentando...").format(
-								attempt=attempt + 1, 
-								max_retries_val=max_retries + 1, 
-								stream_timeout=self.stream_read_timeout
-							))
-							time.sleep(self.retry_interval)
-						else:			
-							log_message = self.tr("Intento {attempt}/{max_retries_val}: Error {status_code} - Reintentando...").format(
-								attempt=attempt + 1, max_retries_val=max_retries + 1, status_code=status_code)
+						self._log_retry(
+							attempt,
+							max_retries,
+							"Attempt {attempt}/{max_retries_val}: Error {status_code} - Retrying...",
+							status_code=status_code,
+						)
 						
 					if status_code in (403, 404) and ("coomer" in domain or "kemono" in domain) and attempt == max_retries:
 						self.log(self.tr("Fallo final al acceder a {url} con error {status_code}").format(url=url, status_code=status_code))
