@@ -6,6 +6,7 @@ import sys
 import re
 import os
 import threading
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext
@@ -16,7 +17,6 @@ import requests
 from PIL import Image
 import customtkinter as ctk
 from PIL import Image, ImageTk
-import psutil
 import functools
 import subprocess
 
@@ -681,6 +681,11 @@ class ImageDownloaderApp(ctk.CTk):
         self.history_service_display_map = {}
         self.cancelled_downloader_snapshot = None
 
+        self._managed_downloaders = set()
+        self._managed_downloaders_lock = threading.Lock()
+        self._download_threads = set()
+        self._download_threads_lock = threading.Lock()
+
         # About window placeholder
         self.about_window = None
 
@@ -747,7 +752,7 @@ class ImageDownloaderApp(ctk.CTk):
         if self.download_folder:
             self.folder_path.configure(text=self.download_folder)
 
-        self.default_downloader = Downloader(
+        self.default_downloader = self._register_downloader(Downloader(
             download_folder=self.download_folder,
             max_workers=self.max_downloads,
             log_callback=self.add_log_message_safe,
@@ -758,7 +763,7 @@ class ImageDownloaderApp(ctk.CTk):
             folder_structure=folder_structure_setting,
             max_retries=max_retries_setting,
             stream_read_timeout=self.request_timeout,
-        )
+        ))
         
         self.settings_window.downloader = self.default_downloader
 
@@ -794,19 +799,72 @@ class ImageDownloaderApp(ctk.CTk):
                 self.tr("Hay una descarga en progreso. Por favor, cancela la descarga antes de cerrar.")
             )
         else:
-            self.destroy()
+            self.close_program()
 
     def is_download_active(self):
         return self.active_downloader is not None
     
-    def close_program(self):
-        # Cierra todas las ventanas y termina el proceso principal
+    def close_program(self, wait_timeout: Optional[float] = 30.0):
+        downloaders = self._get_managed_downloaders_snapshot()
+        for downloader in downloaders:
+            cancel = getattr(downloader, "request_cancel", None)
+            if callable(cancel):
+                cancel()
+
+        self.active_downloader = None
+        self._wait_for_download_threads(timeout=wait_timeout)
+
+        for downloader in downloaders:
+            shutdown = getattr(downloader, "shutdown_executor", None)
+            if callable(shutdown):
+                shutdown()
         self.destroy()
-        # Matar el proceso actual (eliminar del administrador de tareas)
-        current_process = psutil.Process(os.getpid())
-        for handler in current_process.children(recursive=True):
-            handler.kill()
-        current_process.kill()
+
+    def _register_downloader(self, downloader):
+        if downloader is None:
+            return None
+        with self._managed_downloaders_lock:
+            self._managed_downloaders.add(downloader)
+        return downloader
+
+    def _get_managed_downloaders_snapshot(self):
+        with self._managed_downloaders_lock:
+            return [downloader for downloader in self._managed_downloaders if downloader is not None]
+
+    def _register_download_thread(self, thread):
+        if thread is None:
+            return None
+        with self._download_threads_lock:
+            self._download_threads.add(thread)
+        return thread
+
+    def _unregister_current_download_thread(self):
+        current_thread = threading.current_thread()
+        with self._download_threads_lock:
+            self._download_threads.discard(current_thread)
+
+    def _wait_for_download_threads(self, timeout: Optional[float] = None):
+        deadline = time.time() + timeout if timeout is not None else None
+        while True:
+            with self._download_threads_lock:
+                active_threads = [t for t in self._download_threads if t.is_alive()]
+            if not active_threads:
+                break
+
+            for thread in active_threads:
+                join_timeout = None
+                if deadline is not None:
+                    remaining = deadline - time.time()
+                    if remaining <= 0:
+                        break
+                    join_timeout = remaining
+                thread.join(join_timeout)
+
+            if deadline is not None and time.time() >= deadline:
+                break
+
+        with self._download_threads_lock:
+            self._download_threads = {t for t in self._download_threads if t.is_alive()}
     
     # Save and load language preferences
     def save_language_preference(self, language_code):
@@ -1289,7 +1347,7 @@ class ImageDownloaderApp(ctk.CTk):
 
     # Setup downloaders
     def setup_erome_downloader(self, is_profile_download=False):
-        self.erome_downloader = EromeDownloader(
+        self.erome_downloader = self._register_downloader(EromeDownloader(
             root=self,
             enable_widgets_callback=self.enable_widgets,
             headers={
@@ -1305,10 +1363,10 @@ class ImageDownloaderApp(ctk.CTk):
             max_workers=self.max_downloads,
             tr=self.tr,
             request_timeout=self.request_timeout,
-        )
+        ))
 
     def setup_simpcity_downloader(self):
-        self.simpcity_downloader = SimpCity(
+        self.simpcity_downloader = self._register_downloader(SimpCity(
             download_folder=self.download_folder,
             log_callback=self.add_log_message_safe,
             enable_widgets_callback=self.enable_widgets,
@@ -1318,7 +1376,7 @@ class ImageDownloaderApp(ctk.CTk):
             request_timeout=self.request_timeout,
             cookie_password_provider=self.get_simpcity_cookie_password,
             cookie_storage_allowed=bool(self.settings.get('save_simpcity_cookies', False)),
-        )
+        ))
 
     def get_simpcity_cookie_password(self, purpose: Optional[str] = None):
         return self.simpcity_cookie_password
@@ -1350,7 +1408,7 @@ class ImageDownloaderApp(ctk.CTk):
         self.simpcity_cookie_password = env_password if env_password else None
 
     def setup_bunkr_downloader(self):
-        self.bunkr_downloader = BunkrDownloader(
+        self.bunkr_downloader = self._register_downloader(BunkrDownloader(
             download_folder=self.download_folder,
             log_callback=self.add_log_message_safe,
             enable_widgets_callback=self.enable_widgets,
@@ -1362,10 +1420,10 @@ class ImageDownloaderApp(ctk.CTk):
             },
             max_workers=self.max_downloads,
             request_timeout=self.request_timeout,
-        )
+        ))
 
     def setup_general_downloader(self):
-        self.general_downloader = Downloader(
+        self.general_downloader = self._register_downloader(Downloader(
             download_folder=self.download_folder,
             log_callback=self.add_log_message_safe,
             enable_widgets_callback=self.enable_widgets,
@@ -1383,11 +1441,11 @@ class ImageDownloaderApp(ctk.CTk):
             max_workers=self.max_downloads,
             folder_structure=self.settings.get('folder_structure', 'default'),
             stream_read_timeout=self.request_timeout,
-        )
+        ))
         self.general_downloader.file_naming_mode = self.settings.get('file_naming_mode', 0)
 
     def setup_jpg5_downloader(self):
-        self.active_downloader = Jpg5Downloader(
+        self.active_downloader = self._register_downloader(Jpg5Downloader(
             url=self.url_entry.get().strip(),
             carpeta_destino=self.download_folder,
             log_callback=self.add_log_message_safe,
@@ -1395,7 +1453,7 @@ class ImageDownloaderApp(ctk.CTk):
             progress_manager=self.progress_manager,
             max_workers=self.max_downloads,
             request_timeout=self.request_timeout,
-        )
+        ))
 
     # Folder selection
     def select_folder(self):
@@ -1439,6 +1497,7 @@ class ImageDownloaderApp(ctk.CTk):
             self.active_downloader = None
             self.enable_widgets()
             self.export_logs()
+            self._unregister_current_download_thread()
 
     def record_download_session(self):
         context = self.current_download_context or {}
@@ -1799,6 +1858,7 @@ class ImageDownloaderApp(ctk.CTk):
             self.current_download_context = None
             return
 
+        self._register_download_thread(download_thread)
         download_thread.start()
 
     def start_ck_profile_download(self, site, service, user, query, download_all, initial_offset, selected_posts):
