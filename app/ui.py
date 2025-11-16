@@ -494,9 +494,9 @@ class ImageDownloaderApp(ctk.CTk):
         self.history_service_display_map = {}
         self.cancelled_downloader_snapshot = None
 
-        # About window
-        self.about_window = AboutWindow(self, self.tr, VERSION)  # Inicializa AboutWindow
-        
+        # About window placeholder
+        self.about_window = None
+
         self.extras_window = None
 
         # Load settings
@@ -507,13 +507,26 @@ class ImageDownloaderApp(ctk.CTk):
         self.load_translations(lang)
         self.image_downloader = None
 
+        # Determine request timeout configuration
+        request_timeout_setting = self.settings.get('http_timeout', 20.0)
+        try:
+            request_timeout_setting = float(request_timeout_setting)
+        except (TypeError, ValueError):
+            request_timeout_setting = 20.0
+        if request_timeout_setting <= 0:
+            request_timeout_setting = 0.1
+        self.request_timeout = request_timeout_setting
+
+        # About window (after timeout is known)
+        self.about_window = AboutWindow(self, self.tr, VERSION, request_timeout=self.request_timeout)
+
         # Patch notes
-        #self.patch_notes = PatchNotes(self, self.tr)
+        #self.patch_notes = PatchNotes(self, self.tr, request_timeout=self.request_timeout)
 
         self.progress_bars = {}
         
         # Obtener el número de estrellas de GitHub
-        self.github_stars = self.get_github_stars("emy69", "CoomerDL")
+        self.github_stars = self.get_github_stars("emy69", "CoomerDL", timeout=min(self.request_timeout, 5.0))
 
         # Cargar el icono de GitHub
         self.github_icon = self.load_github_icon()
@@ -553,7 +566,8 @@ class ImageDownloaderApp(ctk.CTk):
             tr=self.tr,
             retry_interval=retry_interval_setting,
             folder_structure=folder_structure_setting,
-            max_retries=max_retries_setting
+            max_retries=max_retries_setting,
+            stream_read_timeout=self.request_timeout,
         )
         
         self.settings_window.downloader = self.default_downloader
@@ -1099,7 +1113,8 @@ class ImageDownloaderApp(ctk.CTk):
             download_videos=self.download_videos_check.get(),
             is_profile_download=is_profile_download,
             max_workers=self.max_downloads,
-            tr=self.tr
+            tr=self.tr,
+            request_timeout=self.request_timeout,
         )
 
     def setup_simpcity_downloader(self):
@@ -1109,7 +1124,8 @@ class ImageDownloaderApp(ctk.CTk):
             enable_widgets_callback=self.enable_widgets,
             update_progress_callback=self.update_progress,
             update_global_progress_callback=self.update_global_progress,
-            tr=self.tr
+            tr=self.tr,
+            request_timeout=self.request_timeout,
         )
 
     def setup_bunkr_downloader(self):
@@ -1123,7 +1139,8 @@ class ImageDownloaderApp(ctk.CTk):
                 'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
                 'Referer': 'https://bunkr.site/',
             },
-            max_workers=self.max_downloads
+            max_workers=self.max_downloads,
+            request_timeout=self.request_timeout,
         )
 
     def setup_general_downloader(self):
@@ -1143,7 +1160,8 @@ class ImageDownloaderApp(ctk.CTk):
             download_compressed=self.download_compressed_check.get(),
             tr=self.tr,
             max_workers=self.max_downloads,
-            folder_structure=self.settings.get('folder_structure', 'default')
+            folder_structure=self.settings.get('folder_structure', 'default'),
+            stream_read_timeout=self.request_timeout,
         )
         self.general_downloader.file_naming_mode = self.settings.get('file_naming_mode', 0)
 
@@ -1154,7 +1172,8 @@ class ImageDownloaderApp(ctk.CTk):
             log_callback=self.add_log_message_safe,
             tr=self.tr,
             progress_manager=self.progress_manager,
-            max_workers=self.max_downloads
+            max_workers=self.max_downloads,
+            request_timeout=self.request_timeout,
         )
 
     # Folder selection
@@ -2049,7 +2068,7 @@ class ImageDownloaderApp(ctk.CTk):
         github_api_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/releases/latest"
         
         try:
-            response = requests.get(github_api_url)
+            response = requests.get(github_api_url, timeout=self.request_timeout)
             response.raise_for_status() # Raise an exception for HTTP errors
             latest_release = response.json()
             

@@ -224,13 +224,30 @@ class Downloader:
 
 		
 		if self.executor:
+			self.log(self.tr("Waiting for active downloads to finish before updating settings.") if self.tr else "Waiting for active downloads to finish before updating settings.")
 			self.executor.shutdown(wait=True)
 
 		
 		self.executor = ThreadPoolExecutor(max_workers=max_workers)
 		self.rate_limit = Semaphore(max_workers)
 
-		self.log(f"Updated download mode to {mode} with max_workers = {max_workers}")
+		existing_domains = list(self.domain_locks.keys())
+		self.domain_locks = defaultdict(lambda: Semaphore(max_workers))
+		for domain in existing_domains:
+			self.domain_locks[domain] = Semaphore(max_workers)
+
+		self.log(
+			self.tr("Updated download mode to {mode} with max_workers = {max_workers}").format(mode=mode,
+																							   max_workers=max_workers)
+			if self.tr
+			else f"Updated download mode to {mode} with max_workers = {max_workers}"
+		)
+		self.log(
+			self.tr("Domain throttling updated to allow {max_workers} concurrent requests per domain.").format(
+				max_workers=max_workers)
+			if self.tr
+			else f"Domain throttling updated to allow {max_workers} concurrent requests per domain."
+		)
 	
 	def set_retry_settings(self, max_retries, retry_interval):
 		try:
