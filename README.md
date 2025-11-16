@@ -83,10 +83,16 @@ Have questions or just want to say hi? Join the Discord server:
 ---
 
 ## Usage
-
+**Standard Download**
 1. Launch the application.
 2. Paste the URL of the image or video you want to download.
 3. Click **Download** and wait for the process to finish.
+
+**Download with Preflight Check**
+1. Launch the application.
+2. Paste the URL of the image or video you want to download.
+3. Tick **Preflight Post Selection**.
+4. In the window that pops up, select the posts you want or use the filters to select posts matching certain criteria.
 
 <img width="1885" height="833" alt="image" src="https://github.com/user-attachments/assets/1974c23a-4a80-44bd-ae45-90b1d1ff9650" />
 
