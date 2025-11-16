@@ -62,6 +62,7 @@ class RetrySettingsTests(unittest.TestCase):
             "folder_structure": DummyWidget("by_service"),
             "max_retries": DummyWidget("5"),
             "retry_interval": DummyWidget("1.5"),
+            "http_timeout": DummyWidget("5.0"),
             "file_naming_mode": DummyWidget("Use File ID (default)"),
         }
 
@@ -72,6 +73,7 @@ class RetrySettingsTests(unittest.TestCase):
                 widgets["folder_structure"],
                 widgets["max_retries"],
                 widgets["retry_interval"],
+                widgets["http_timeout"],
                 widgets["file_naming_mode"],
             )
 

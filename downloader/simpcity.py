@@ -11,7 +11,13 @@ from typing import Callable, Optional
 
 import cloudscraper
 from bs4 import BeautifulSoup
-from cryptography.fernet import Fernet, InvalidToken
+try:
+    from cryptography.fernet import Fernet, InvalidToken
+except ImportError:  # pragma: no cover - optional dependency
+    Fernet = None
+
+    class InvalidToken(Exception):
+        """Fallback InvalidToken when cryptography is unavailable."""
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
@@ -80,7 +86,7 @@ class SimpCity:
                 return
             self._is_paused = True
         self.pause_event.clear()
-        self.log(self.tr("Descarga en pausa"))
+        self.log(self.tr("Download paused"))
 
     def request_resume(self):
         with self.state_lock:
@@ -88,14 +94,14 @@ class SimpCity:
                 return
             self._is_paused = False
         self.pause_event.set()
-        self.log(self.tr("Descarga reanudada"))
+        self.log(self.tr("Download resumed"))
 
     def request_cancel(self):
         self.cancel_requested = True
         self.pause_event.set()
         with self.state_lock:
             self._is_paused = False
-        self.log(self.tr("Descarga cancelada por el usuario."))
+        self.log(self.tr("Download cancelled by user."))
         if self.enable_widgets_callback:
             self.enable_widgets_callback()
 
@@ -131,6 +137,9 @@ class SimpCity:
         return None
 
     def _load_encrypted_cookies(self, file_path: Path) -> Optional[list]:
+        if Fernet is None:
+            self.log(self.tr("La dependencia 'cryptography' no está disponible; no se pueden cargar cookies cifradas."))
+            return None
         if not file_path.exists():
             self.log(self.tr(f"No se encontró el archivo de cookies: {file_path}"))
             return None
@@ -164,6 +173,11 @@ class SimpCity:
     def _save_encrypted_cookies(self, cookies: list, file_path: Path) -> None:
         if not self.cookie_storage_allowed:
             self.log(self.tr("El guardado de cookies está deshabilitado en la configuración."))
+            return
+
+        if Fernet is None:
+            self.log(
+                self.tr("La dependencia 'cryptography' no está disponible; no se pueden guardar cookies cifradas."))
             return
 
         password = self._request_cookie_password('save')

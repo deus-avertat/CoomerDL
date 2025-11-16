@@ -35,6 +35,26 @@ from app.donors import DonorsModal
 VERSION = "V0.8.17"
 MAX_LOG_LINES = None
 
+IMAGE_EXTENSIONS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".bmp",
+    ".tiff",
+}
+
+VIDEO_EXTENSIONS = {
+    ".mp4",
+    ".mkv",
+    ".webm",
+    ".mov",
+    ".avi",
+    ".flv",
+    ".wmv",
+    ".m4v",
+}
+
 class PostSelectionDialog(ctk.CTkToplevel):
     def __init__(self, parent, posts, tr, user_id, service, site):
         super().__init__(parent)
@@ -51,6 +71,8 @@ class PostSelectionDialog(ctk.CTkToplevel):
         self._post_dates = {}
         self._available_years = []
         self._post_search_texts = {}
+        self._post_entries = []
+        self._no_results_label = None
 
         years_set = set()
 
@@ -94,6 +116,15 @@ class PostSelectionDialog(ctk.CTkToplevel):
             if published_display:
                 display_text += f"\n{tr('Published')}: {published_display}"
 
+            metrics = self._calculate_media_counts(post)
+            metrics_text = tr(
+                "Images: {images} | Videos: {videos} | Attachments: {attachments}",
+                images=metrics["images"],
+                videos=metrics["videos"],
+                attachments=metrics["attachments"],
+            )
+            display_text += f"\n{metrics_text}"
+
             var = tk.BooleanVar(value=True)
             checkbox = ctk.CTkCheckBox(
                 self.scrollable,
@@ -103,8 +134,14 @@ class PostSelectionDialog(ctk.CTkToplevel):
                 offvalue=False,
                 width=480,
             )
-            checkbox.pack(fill="x", padx=5, pady=5, anchor="w")
             self._checkbox_vars[post_id] = var
+            entry = {
+                "post_id": post_id,
+                "checkbox": checkbox,
+                "metrics": metrics,
+                "order": len(self._post_entries),
+            }
+            self._post_entries.append(entry)
 
         controls_frame = ctk.CTkFrame(self)
         controls_frame.pack(fill="x", padx=20, pady=(0, 10))
@@ -122,6 +159,59 @@ class PostSelectionDialog(ctk.CTkToplevel):
             command=self.deselect_all,
         )
         deselect_all_button.pack(side="left")
+
+        metric_filter_frame = ctk.CTkFrame(self)
+        metric_filter_frame.pack(fill="x", padx=20, pady=(0, 10))
+
+        sort_label = ctk.CTkLabel(metric_filter_frame, text=tr("Sort by"))
+        sort_label.grid(row=0, column=0, padx=(0, 10), pady=(10, 5), sticky="w")
+
+        self._sort_option_map = {
+            tr("Original order"): ("order", False),
+            tr("Attachments (High to Low)"): ("attachments", True),
+            tr("Attachments (Low to High)"): ("attachments", False),
+            tr("Images (High to Low)"): ("images", True),
+            tr("Images (Low to High)"): ("images", False),
+            tr("Videos (High to Low)"): ("videos", True),
+            tr("Videos (Low to High)"): ("videos", False),
+        }
+        sort_values = list(self._sort_option_map.keys())
+        self.metric_sort_combobox = ctk.CTkComboBox(
+            metric_filter_frame,
+            values=sort_values,
+            command=self.on_sort_selection,
+            width=200,
+        )
+        self.metric_sort_combobox.set(sort_values[0])
+        self.metric_sort_combobox.grid(row=0, column=1, padx=(0, 10), pady=(10, 5), sticky="w")
+
+        clear_metrics_button = ctk.CTkButton(
+            metric_filter_frame,
+            text=tr("Clear count filters"),
+            command=self.clear_metric_filters,
+            width=160,
+        )
+        clear_metrics_button.grid(row=0, column=2, padx=(0, 10), pady=(10, 5), sticky="ew")
+
+        self.min_attachments_var = tk.StringVar()
+        self.min_images_var = tk.StringVar()
+        self.min_videos_var = tk.StringVar()
+
+        metric_inputs = [
+            (tr("Min attachments"), self.min_attachments_var, 1),
+            (tr("Min images"), self.min_images_var, 2),
+            (tr("Min videos"), self.min_videos_var, 3),
+        ]
+
+        for label_text, var, row in metric_inputs:
+            label = ctk.CTkLabel(metric_filter_frame, text=label_text)
+            label.grid(row=row, column=0, padx=(0, 10), pady=5, sticky="w")
+            entry = ctk.CTkEntry(metric_filter_frame, textvariable=var, width=140)
+            entry.grid(row=row, column=1, padx=(0, 10), pady=5, sticky="w")
+            var.trace_add("write", self._on_metric_filter_change)
+
+        metric_filter_frame.grid_columnconfigure(1, weight=1)
+        metric_filter_frame.grid_columnconfigure(2, weight=1)
 
         keyword_filter_frame = ctk.CTkFrame(self)
         keyword_filter_frame.pack(fill="x", padx=20, pady=(0, 10))
@@ -237,6 +327,8 @@ class PostSelectionDialog(ctk.CTkToplevel):
             command=self.on_confirm,
         )
         confirm_button.pack(side="right")
+
+        self._refresh_post_layout()
 
     def select_all(self):
         for var in self._checkbox_vars.values():
@@ -374,6 +466,101 @@ class PostSelectionDialog(ctk.CTkToplevel):
         self.keyword_entry.delete(0, tk.END)
         self.keyword_match_all.set(False)
         self.select_all()
+
+    def clear_metric_filters(self):
+        self.min_attachments_var.set("")
+        self.min_images_var.set("")
+        self.min_videos_var.set("")
+
+    def on_sort_selection(self, _value):
+        self._refresh_post_layout()
+
+    def _on_metric_filter_change(self, *_):
+        self._refresh_post_layout()
+
+    def _refresh_post_layout(self):
+        if not self._post_entries:
+            return
+
+        if self._no_results_label is not None:
+            self._no_results_label.destroy()
+            self._no_results_label = None
+
+        sort_choice = self.metric_sort_combobox.get() if hasattr(self, "metric_sort_combobox") else None
+        sort_key, descending = self._sort_option_map.get(sort_choice, ("order", False))
+        filters = self._parse_metric_filters()
+        ordered_entries = self.apply_sort_and_filters(self._post_entries, filters, sort_key, descending)
+
+        for entry in self._post_entries:
+            entry["checkbox"].pack_forget()
+
+        if not ordered_entries:
+            self._no_results_label = ctk.CTkLabel(self.scrollable, text=self._tr("No posts match the current filters."))
+            self._no_results_label.pack(pady=10)
+            return
+
+        for entry in ordered_entries:
+            entry["checkbox"].pack(fill="x", padx=5, pady=5, anchor="w")
+
+    @staticmethod
+    def apply_sort_and_filters(entries, filters, sort_key, descending):
+        def matches(entry):
+            metrics = entry.get("metrics", {})
+            for name, value in filters.items():
+                if value is None:
+                    continue
+                if metrics.get(name, 0) < value:
+                    return False
+            return True
+
+        filtered = [entry for entry in entries if matches(entry)]
+
+        def sort_value(entry):
+            if sort_key == "order":
+                return entry.get("order", 0)
+            return entry.get("metrics", {}).get(sort_key, 0)
+
+        return sorted(filtered, key=sort_value, reverse=descending)
+
+    def _parse_metric_filters(self):
+        return {
+            "attachments": self._parse_metric_value(getattr(self, "min_attachments_var", None)),
+            "images": self._parse_metric_value(getattr(self, "min_images_var", None)),
+            "videos": self._parse_metric_value(getattr(self, "min_videos_var", None)),
+        }
+
+    def _parse_metric_value(self, var):
+        if var is None:
+            return None
+        value = var.get().strip()
+        if not value:
+            return None
+        try:
+            parsed = int(value)
+        except ValueError:
+            return None
+        return max(parsed, 0)
+
+    def _calculate_media_counts(self, post):
+        attachments = post.get("attachments") or []
+        main_file = post.get("file")
+        media_entries = []
+        if isinstance(main_file, dict) and any(main_file.get(key) for key in ("path", "url", "name")):
+            media_entries.append(main_file)
+        for attachment in attachments:
+            if isinstance(attachment, dict):
+                media_entries.append(attachment)
+
+        metrics = {"attachments": len(media_entries), "images": 0, "videos": 0}
+        for entry in media_entries:
+            source = str(entry.get("path") or entry.get("url") or entry.get("name") or "").lower()
+            path = source.split("?")[0]
+            _, ext = os.path.splitext(path)
+            if ext in IMAGE_EXTENSIONS:
+                metrics["images"] += 1
+            elif ext in VIDEO_EXTENSIONS:
+                metrics["videos"] += 1
+        return metrics
 
     def _parse_date_input(self, value):
         try:
