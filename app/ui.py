@@ -39,7 +39,7 @@ class PostSelectionDialog(ctk.CTkToplevel):
     def __init__(self, parent, posts, tr, user_id, service, site):
         super().__init__(parent)
         self.title(tr("Select posts"))
-        self.geometry("540x600")
+        self.geometry("600x800")
         self.transient(parent)
         self.grab_set()
         self.protocol("WM_DELETE_WINDOW", self.on_cancel)
@@ -649,7 +649,7 @@ class ImageDownloaderApp(ctk.CTk):
 
     # Window setup
     def setup_window(self):
-        window_width, window_height = 1000, 600
+        window_width, window_height = 1280, 720
         center_x = int((self.winfo_screenwidth() / 2) - (window_width / 2))
         center_y = int((self.winfo_screenheight() / 2) - (window_height / 2))
         self.geometry(f"{window_width}x{window_height}+{center_x}+{center_y}")

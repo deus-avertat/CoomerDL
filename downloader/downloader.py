@@ -49,7 +49,8 @@ class Downloader:
 		self.download_images = download_images
 		self.download_videos = download_videos
 		self.download_compressed = download_compressed
-		self.futures = []  
+		self.futures = []
+		self.futures_lock = threading.Lock()
 		self.total_files = 0
 		self.completed_files = 0
 		self.skipped_files = []  
@@ -226,6 +227,7 @@ class Downloader:
 		if self.executor:
 			self.log(self.tr("Waiting for active downloads to finish before updating settings.") if self.tr else "Waiting for active downloads to finish before updating settings.")
 			self.executor.shutdown(wait=True)
+			self._reset_futures()
 
 		
 		self.executor = ThreadPoolExecutor(max_workers=max_workers)
@@ -267,14 +269,40 @@ class Downloader:
 		self.stream_read_timeout = timeout
 		self.request_timeout = timeout
 
+	def _future_done_callback(self, future):
+		with self.futures_lock:
+			try:
+				self.futures.remove(future)
+			except ValueError:
+				pass
+
+	def _register_future(self, future):
+		with self.futures_lock:
+			self.futures.append(future)
+		future.add_done_callback(self._future_done_callback)
+
+	def _reset_futures(self):
+		with self.futures_lock:
+			self.futures.clear()
+
+	def _cancel_futures(self, futures=None):
+		if futures is None:
+			with self.futures_lock:
+				futures_to_cancel = list(self.futures)
+		else:
+			futures_to_cancel = list(futures)
+		for future in futures_to_cancel:
+			if future is None:
+				continue
+			future.cancel()
+
 	def request_cancel(self):
 		self.cancel_requested.set()
 		self.pause_event.set()
 		with self.state_lock:
 			self._is_paused = False
 		self.log(self.tr("Download cancellation requested."))
-		for future in self.futures:
-			future.cancel()
+		self._cancel_futures()
 
 	def shutdown_executor(self):
 		if not self.shutdown_called:
@@ -284,6 +312,7 @@ class Downloader:
 				self._is_paused = False
 			if self.executor:
 				self.executor.shutdown(wait=True)
+			self._reset_futures()
 			if self.enable_widgets_callback:
 				self.enable_widgets_callback()
 			self.log(self.tr("All downloads completed or cancelled."))
@@ -886,10 +915,14 @@ class Downloader:
 					
 					self.total_files += 1
 
-			
+			self._reset_futures()
 			futures = []
 			for post in posts:
 				if not self.wait_if_paused():
+					self._cancel_futures(futures)
+					return
+				if self.cancel_requested.is_set():
+					self._cancel_futures(futures)
 					return
 				current_post_id = post.get('id') or "unknown_id"
 				title = post.get('title') or ""
@@ -920,17 +953,22 @@ class Downloader:
 							media_url,
 							user_id,
 							current_post_id,
-							title,  
+							title,
 							time,
-							media_url 
+							media_url
 						)
+						self._register_future(future)
 						futures.append(future)
 
 			
 			if self.download_mode == 'multi':
-				for future in as_completed(futures):
-					if self.cancel_requested.is_set():
-						break
+				if self.cancel_requested.is_set():
+					self._cancel_futures(futures)
+				else:
+					for future in as_completed(futures):
+						if self.cancel_requested.is_set():
+							self._cancel_futures(futures)
+							break
 
 		except Exception as e:
 			self.log(self.tr(f"Error during download: {e}"))
@@ -944,6 +982,7 @@ class Downloader:
 				self.log(self.tr("No post found for this ID."))
 				return
 			media_urls = self.process_post(post[0], site)
+			self._reset_futures()
 			futures = []
 			grouped_media_urls = defaultdict(list)
 			for media_url in media_urls:
@@ -952,17 +991,26 @@ class Downloader:
 			self.completed_files = 0
 			for post_id, media_urls in grouped_media_urls.items():
 				if not self.wait_if_paused():
+					self._cancel_futures(futures)
+					return
+				if self.cancel_requested.is_set():
+					self._cancel_futures(futures)
 					return
 				for media_url in media_urls:
 					if self.download_mode == 'queue':
 						self.process_media_element(media_url, user_id, post_id)
 					else:
 						future = self.executor.submit(self.process_media_element, media_url, user_id, post_id)
+						self._register_future(future)
 						futures.append(future)
 			if self.download_mode == 'multi':
-				for future in as_completed(futures):
-					if self.cancel_requested.is_set():
-						break
+				if self.cancel_requested.is_set():
+					self._cancel_futures(futures)
+				else:
+					for future in as_completed(futures):
+						if self.cancel_requested.is_set():
+							self._cancel_futures(futures)
+							break
 		except Exception as e:
 			self.log(self.tr(f"Error during download: {e}"))
 		finally:
