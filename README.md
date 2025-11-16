@@ -88,7 +88,8 @@ Have questions or just want to say hi? Join the Discord server:
 2. Paste the URL of the image or video you want to download.
 3. Click **Download** and wait for the process to finish.
 
-![Usage GIF](https://github.com/Emy69/CoomerDL/blob/main/resources/screenshots/0627.gif)
+<img width="1885" height="833" alt="image" src="https://github.com/user-attachments/assets/1974c23a-4a80-44bd-ae45-90b1d1ff9650" />
+
 
 ### SimpCity cookies and privacy
 
