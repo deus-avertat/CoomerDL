@@ -8,6 +8,8 @@ import tkinter as tk
 from PIL import Image, ImageTk
 from PIL import Image as PilImage
 
+from downloader.simpcity import SIMPCITY_COOKIES_FILE
+
 
 class SettingsWindow:
     CONFIG_PATH = 'resources/config/settings.json' 
@@ -347,6 +349,48 @@ class SettingsWindow:
                                             command=lambda: threading.Thread(target=self.check_for_new_version, args=(False,)).start())
         check_update_button.grid(row=6, column=1, pady=5, padx=(10,0), sticky="w")
 
+        separator_privacy = ttk.Separator(general_frame, orient="horizontal")
+        separator_privacy.grid(row=7, column=0, columnspan=3, sticky="ew", pady=15)
+
+        privacy_label = ctk.CTkLabel(general_frame, text=self.translate("Privacy & Cookies"), font=("Helvetica", 14))
+        privacy_label.grid(row=8, column=0, columnspan=2, pady=(0, 5), sticky="w")
+
+        privacy_description = ctk.CTkLabel(
+            general_frame,
+            text=self.translate(
+                "Las cookies cifradas de SimpCity se guardan localmente para evitar nuevos inicios de sesión."),
+            font=("Helvetica", 11),
+            text_color="gray",
+            justify="left",
+            wraplength=500,
+        )
+        privacy_description.grid(row=9, column=0, columnspan=3, sticky="w")
+
+        self.save_simpcity_cookies_var = tk.BooleanVar(value=bool(self.settings.get('save_simpcity_cookies', False)))
+        save_cookies_switch = ctk.CTkSwitch(
+            general_frame,
+            text=self.translate("Permitir guardar cookies cifradas de SimpCity"),
+            variable=self.save_simpcity_cookies_var,
+            command=self.on_simpcity_cookie_toggle,
+        )
+        save_cookies_switch.grid(row=10, column=0, columnspan=2, pady=5, sticky="w")
+
+        cookie_path_label = ctk.CTkLabel(
+            general_frame,
+            text=self.translate("Las cookies se guardan en: {path}").format(path=SIMPCITY_COOKIES_FILE),
+            font=("Helvetica", 11),
+            text_color="gray",
+            wraplength=500,
+            justify="left",
+        )
+        cookie_path_label.grid(row=11, column=0, columnspan=3, sticky="w")
+
+        clear_cookies_button = ctk.CTkButton(
+            general_frame,
+            text=self.translate("Eliminar cookies cifradas"),
+            command=self.delete_simpcity_cookies,
+        )
+        clear_cookies_button.grid(row=12, column=0, pady=10, sticky="w")
 
     def render_downloads_tab(self, tab):
         tab.grid_columnconfigure(0, weight=1)
@@ -559,7 +603,32 @@ class SettingsWindow:
         self.post_treeview.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
 
         self.update_treeview()
-    
+
+    def on_simpcity_cookie_toggle(self):
+        enabled = bool(self.save_simpcity_cookies_var.get())
+        self.settings['save_simpcity_cookies'] = enabled
+        self.save_settings()
+
+    def delete_simpcity_cookies(self):
+        if not SIMPCITY_COOKIES_FILE.exists():
+            messagebox.showinfo(self.translate("Información"), self.translate("No se encontraron cookies cifradas de SimpCity."))
+            return
+
+        confirm = messagebox.askyesno(
+            self.translate("Confirm"),
+            self.translate("¿Deseas eliminar las cookies cifradas de SimpCity?"),
+        )
+        if not confirm:
+            return
+
+        try:
+            SIMPCITY_COOKIES_FILE.unlink()
+            if hasattr(self.parent, 'forget_simpcity_cookie_password'):
+                self.parent.forget_simpcity_cookie_password()
+            messagebox.showinfo(self.translate("Éxito"), self.translate("Cookies cifradas eliminadas."))
+        except OSError as exc:
+            messagebox.showerror(self.translate("Error"), self.translate(f"No se pudieron eliminar las cookies cifradas: {exc}"))
+
     def export_db(self):
         db_path = self.downloader.db_path
         if os.path.exists(db_path):

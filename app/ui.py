@@ -27,7 +27,7 @@ from app.about_window import AboutWindow
 from downloader.bunkr import BunkrDownloader
 from downloader.downloader import Downloader
 from downloader.erome import EromeDownloader
-from downloader.simpcity import SimpCity
+from downloader.simpcity import SimpCity, SIMPCITY_COOKIES_FILE
 from downloader.jpg5 import Jpg5Downloader
 from app.progress_manager import ProgressManager
 from app.donors import DonorsModal
@@ -501,7 +501,10 @@ class ImageDownloaderApp(ctk.CTk):
 
         # Load settings
         self.settings = self.settings_window.load_settings()
-        
+
+        # SimpCity cookie password cache (never persisted on disk)
+        self.simpcity_cookie_password = os.getenv("COOMERDL_COOKIES_PASSWORD")
+
         # Language preferences
         lang = self.load_language_preference()
         self.load_translations(lang)
@@ -1126,7 +1129,38 @@ class ImageDownloaderApp(ctk.CTk):
             update_global_progress_callback=self.update_global_progress,
             tr=self.tr,
             request_timeout=self.request_timeout,
+            cookie_password_provider=self.get_simpcity_cookie_password,
+            cookie_storage_allowed=bool(self.settings.get('save_simpcity_cookies', False)),
         )
+
+    def get_simpcity_cookie_password(self, purpose: Optional[str] = None):
+        return self.simpcity_cookie_password
+
+    def should_prompt_simpcity_cookie_password(self) -> bool:
+        save_enabled = bool(self.settings.get('save_simpcity_cookies', False))
+        return save_enabled or SIMPCITY_COOKIES_FILE.exists()
+
+    def prompt_simpcity_cookie_password(self) -> bool:
+        dialog = ctk.CTkInputDialog(
+            title=self.tr("Contraseña de cookies de SimpCity"),
+            text=self.tr("Introduce la contraseña usada para cifrar tus cookies de SimpCity. No se guardará."),
+        )
+        password = dialog.get_input()
+        if password:
+            self.simpcity_cookie_password = password.strip()
+            return True
+        return False
+
+    def maybe_request_simpcity_cookie_password(self) -> bool:
+        if not self.should_prompt_simpcity_cookie_password():
+            return True
+        if self.simpcity_cookie_password:
+            return True
+        return self.prompt_simpcity_cookie_password()
+
+    def forget_simpcity_cookie_password(self):
+        env_password = os.getenv("COOMERDL_COOKIES_PASSWORD")
+        self.simpcity_cookie_password = env_password if env_password else None
 
     def setup_bunkr_downloader(self):
         self.bunkr_downloader = BunkrDownloader(
@@ -1540,6 +1574,14 @@ class ImageDownloaderApp(ctk.CTk):
         
         elif "simpcity.su" in url:
             self.add_log_message_safe(self.tr("Descargando SimpCity"))
+            if not self.maybe_request_simpcity_cookie_password():
+                self.add_log_message_safe(
+                    self.tr("Descarga de SimpCity cancelada: no se proporcionó contraseña de cookies."))
+                self.download_button.configure(state="normal")
+                self.cancel_button.configure(state="disabled")
+                self.reset_pause_controls()
+                self.current_download_context = None
+                return
             self.setup_simpcity_downloader()
             self.active_downloader = self.simpcity_downloader
             self.current_download_context.update({

@@ -1,22 +1,28 @@
-import os
+import base64
 import json
-import re
+import os
 import queue
+import re
 import threading
 import time
+from hashlib import sha256
 from pathlib import Path
-from bs4 import BeautifulSoup
-from urllib.parse import urlparse
+from typing import Callable, Optional
+
 import cloudscraper
+from bs4 import BeautifulSoup
+from cryptography.fernet import Fernet, InvalidToken
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from concurrent.futures import ThreadPoolExecutor
+from selenium.webdriver.support.ui import WebDriverWait
+from urllib.parse import urlparse
+
+SIMPCITY_COOKIES_FILE = Path('resources/config/simpcity_cookies.enc')
 
 class SimpCity:
-    def __init__(self, download_folder, max_workers=5, log_callback=None, enable_widgets_callback=None, update_progress_callback=None, update_global_progress_callback=None, tr=None, request_timeout=20):
+    def __init__(self, download_folder, max_workers=5, log_callback=None, enable_widgets_callback=None, update_progress_callback=None, update_global_progress_callback=None, tr=None, request_timeout=20, cookie_password_provider: Optional[Callable[[str], Optional[str]]] = None, cookie_storage_allowed: bool = False):
         self.download_folder = download_folder
         self.max_workers = max_workers
         self.descargadas = set()
@@ -35,6 +41,8 @@ class SimpCity:
         self.download_queue = queue.Queue()
         self.scraper = cloudscraper.create_scraper(browser={'browser': 'chrome', 'platform': 'windows', 'mobile': False})
         self.tr = tr
+        self.cookie_password_provider = cookie_password_provider
+        self.cookie_storage_allowed = cookie_storage_allowed
 
         # Selectors from original crawler
         self.title_selector = "h1[class=p-title-value]"
@@ -110,28 +118,97 @@ class SimpCity:
     def sanitize_folder_name(self, name):
         return re.sub(r'[<>:"/\\|?*]', '_', name)
 
-    def get_cookies_with_selenium(self, url, cookies_file='resources/config/cookies.json'):
-        cookies = None
-        if os.path.exists(cookies_file):
-            with open(cookies_file, 'r') as file:
-                cookies = json.load(file)
+    def _derive_key(self, password: str) -> bytes:
+        digest = sha256(password.encode('utf-8')).digest()
+        return base64.urlsafe_b64encode(digest)
 
-        if not cookies:
-            options = Options()
-            options.add_argument('--no-sandbox')
-            options.add_argument('--disable-dev-shm-usage')
-            driver = webdriver.Chrome(options=options)
-            driver.get(url)
+    def _request_cookie_password(self, purpose: str) -> Optional[str]:
+        env_password = os.getenv('COOMERDL_COOKIES_PASSWORD')
+        if env_password:
+            return env_password
+        if self.cookie_password_provider:
+            return self.cookie_password_provider(purpose)
+        return None
 
+    def _load_encrypted_cookies(self, file_path: Path) -> Optional[list]:
+        if not file_path.exists():
+            self.log(self.tr(f"No se encontró el archivo de cookies: {file_path}"))
+            return None
+        try:
+            encrypted_payload = file_path.read_bytes()
+        except OSError as exc:
+            self.log(self.tr(f"Error al acceder al archivo de cookies: {exc}"))
+            return None
+
+        if not encrypted_payload:
+            self.log(self.tr(f"El archivo de cookies cifradas está vacío: {file_path}"))
+            return None
+
+        password = self._request_cookie_password('load')
+        if not password:
+            self.log(self.tr("No se proporcionó la contraseña para descifrar las cookies."))
+            return None
+
+        try:
+            key = self._derive_key(password)
+            decrypted = Fernet(key).decrypt(encrypted_payload)
+            cookies = json.loads(decrypted.decode('utf-8'))
+            self.log(self.tr(f"Cookies cargadas desde {file_path}"))
+            return cookies
+        except InvalidToken:
+            self.log(self.tr("La contraseña de las cookies cifradas no es válida."))
+        except (json.JSONDecodeError, OSError) as exc:
+            self.log(self.tr(f"Error al leer las cookies cifradas: {exc}"))
+        return None
+
+    def _save_encrypted_cookies(self, cookies: list, file_path: Path) -> None:
+        if not self.cookie_storage_allowed:
+            self.log(self.tr("El guardado de cookies está deshabilitado en la configuración."))
+            return
+
+        password = self._request_cookie_password('save')
+        if not password:
+            self.log(self.tr("No se proporcionó la contraseña para cifrar las cookies; no se guardarán."))
+            return
+
+        key = self._derive_key(password)
+        payload = json.dumps(cookies).encode('utf-8')
+        encrypted = Fernet(key).encrypt(payload)
+        try:
+            os.makedirs(file_path.parent, exist_ok=True)
+            file_path.write_bytes(encrypted)
+            self.log(self.tr(f"Cookies guardadas en {file_path}"))
+        except OSError as exc:
+            self.log(self.tr(f"No se pudieron guardar las cookies cifradas: {exc}"))
+
+    def _obtain_cookies_via_browser(self, url: str) -> Optional[list]:
+        options = Options()
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        driver = webdriver.Chrome(options=options)
+        driver.get(url)
+
+        try:
             self.log(self.tr("Por favor, inicia sesión en el navegador abierto."))
             WebDriverWait(driver, 300).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, '.message-content.js-messageContent'))
             )
             cookies = driver.get_cookies()
+        except Exception as exc:
+            self.log(self.tr(f"Error al esperar el inicio de sesión: {exc}"))
+            cookies = None
+        finally:
             driver.quit()
 
-            with open(cookies_file, 'w') as file:
-                json.dump(cookies, file)
+        return cookies
+
+    def get_cookies_with_selenium(self, url, cookies_file: Path = SIMPCITY_COOKIES_FILE):
+        cookies = self._load_encrypted_cookies(cookies_file)
+
+        if not cookies:
+            cookies = self._obtain_cookies_via_browser(url)
+            if cookies:
+                self._save_encrypted_cookies(cookies, cookies_file)
 
         return cookies
 
@@ -144,6 +221,9 @@ class SimpCity:
             return None
         try:
             cookies = self.get_cookies_with_selenium(url)
+            if not cookies:
+                self.log(self.tr("No se pudieron obtener cookies válidas para SimpCity."))
+                return None
             self.set_cookies_in_scraper(cookies)
             response = self.scraper.get(url, timeout=self.request_timeout)
             if response.status_code == 200:

@@ -90,6 +90,12 @@ Have questions or just want to say hi? Join the Discord server:
 
 ![Usage GIF](https://github.com/Emy69/CoomerDL/blob/main/resources/screenshots/0627.gif)
 
+### SimpCity cookies and privacy
+
+- SimpCity logins rely on cookies stored in `resources/config/simpcity_cookies.enc`. The file is encrypted with a password you provide; the password is never written to disk.
+- The application prompts for the password whenever encrypted cookies are read or saved. Advanced users can skip the dialog by setting the `COOMERDL_COOKIES_PASSWORD` environment variable before launching the app.
+- Cookie storage can be toggled and wiped from **Settings → General → Privacy & Cookies**. Use the **Delete encrypted cookies** button to remove the file instantly if you no longer need it.
+
 ---
 
 ## Clone the Repository

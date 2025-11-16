@@ -6,5 +6,6 @@
     "max_retries": 5,
     "retry_interval": 2.0,
     "file_naming_mode": 3,
-    "http_timeout": 20.0
+    "http_timeout": 20.0,
+    "save_simpcity_cookies": false
 }

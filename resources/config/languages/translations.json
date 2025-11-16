@@ -119,6 +119,70 @@
         "ru": "Файл cookies не найден: {file_path}",
         "zh": "未找到 cookie 文件：{file_path}"
     },
+    "El archivo de cookies cifradas está vacío: {file_path}": {
+        "es": "El archivo de cookies cifradas está vacío: {file_path}",
+        "en": "Encrypted cookie file is empty: {file_path}",
+        "fr": "Le fichier de cookies chiffrés est vide : {file_path}",
+        "ja": "暗号化されたクッキーファイルが空です: {file_path}",
+        "ru": "Файл зашифрованных cookies пуст: {file_path}",
+        "zh": "加密的 cookie 文件为空：{file_path}"
+    },
+    "Error al acceder al archivo de cookies: {exc}": {
+        "es": "Error al acceder al archivo de cookies: {exc}",
+        "en": "Error accessing the cookie file: {exc}",
+        "fr": "Erreur d'accès au fichier de cookies : {exc}",
+        "ja": "クッキーファイルへのアクセスエラー: {exc}",
+        "ru": "Ошибка доступа к файлу cookies: {exc}",
+        "zh": "访问 cookie 文件时出错：{exc}"
+    },
+    "No se proporcionó la contraseña para descifrar las cookies.": {
+        "es": "No se proporcionó la contraseña para descifrar las cookies.",
+        "en": "No password was provided to decrypt the cookies.",
+        "fr": "Aucun mot de passe fourni pour déchiffrer les cookies.",
+        "ja": "クッキーを復号するためのパスワードが指定されていません。",
+        "ru": "Пароль для расшифровки cookies не был указан.",
+        "zh": "未提供用于解密 cookie 的密码。"
+    },
+    "La contraseña de las cookies cifradas no es válida.": {
+        "es": "La contraseña de las cookies cifradas no es válida.",
+        "en": "The encrypted cookie password is invalid.",
+        "fr": "Le mot de passe des cookies chiffrés est invalide.",
+        "ja": "暗号化されたクッキーのパスワードが無効です。",
+        "ru": "Неверный пароль зашифрованных cookies.",
+        "zh": "加密 cookie 的密码无效。"
+    },
+    "Error al leer las cookies cifradas: {exc}": {
+        "es": "Error al leer las cookies cifradas: {exc}",
+        "en": "Error reading encrypted cookies: {exc}",
+        "fr": "Erreur lors de la lecture des cookies chiffrés : {exc}",
+        "ja": "暗号化されたクッキーの読み取りエラー: {exc}",
+        "ru": "Ошибка чтения зашифрованных cookies: {exc}",
+        "zh": "读取加密 cookie 时出错：{exc}"
+    },
+    "El guardado de cookies está deshabilitado en la configuración.": {
+        "es": "El guardado de cookies está deshabilitado en la configuración.",
+        "en": "Saving cookies is disabled in settings.",
+        "fr": "L'enregistrement des cookies est désactivé dans les paramètres.",
+        "ja": "設定でクッキーの保存が無効になっています。",
+        "ru": "Сохранение cookies отключено в настройках.",
+        "zh": "设置中禁用了保存 cookie。"
+    },
+    "No se proporcionó la contraseña para cifrar las cookies; no se guardarán.": {
+        "es": "No se proporcionó la contraseña para cifrar las cookies; no se guardarán.",
+        "en": "No password was provided to encrypt the cookies; they will not be saved.",
+        "fr": "Aucun mot de passe n'a été fourni pour chiffrer les cookies ; ils ne seront pas enregistrés.",
+        "ja": "クッキーを暗号化するためのパスワードが指定されていないため、保存されません。",
+        "ru": "Пароль для шифрования cookies не указан; они не будут сохранены.",
+        "zh": "未提供用于加密 cookie 的密码，因此不会保存。"
+    },
+    "No se pudieron guardar las cookies cifradas: {exc}": {
+        "es": "No se pudieron guardar las cookies cifradas: {exc}",
+        "en": "Encrypted cookies could not be saved: {exc}",
+        "fr": "Impossible d'enregistrer les cookies chiffrés : {exc}",
+        "ja": "暗号化されたクッキーを保存できませんでした: {exc}",
+        "ru": "Не удалось сохранить зашифрованные cookies: {exc}",
+        "zh": "无法保存加密的 cookie：{exc}"
+    },
     "Error al acceder a {url}: {e}": {
         "es": "Error al acceder a {url}: {e}",
         "en": "Error accessing {url}: {e}",
@@ -159,6 +223,14 @@
         "ru": "Ошибка доступа к {imagen_url}: Код состояния {response.status_code}",
         "zh": "访问 {imagen_url} 时出错：状态代码 {response.status_code}"
     },
+    "No se pudieron obtener cookies válidas para SimpCity.": {
+        "es": "No se pudieron obtener cookies válidas para SimpCity.",
+        "en": "Valid SimpCity cookies could not be obtained.",
+        "fr": "Impossible d'obtenir des cookies SimpCity valides.",
+        "ja": "有効な SimpCity クッキーを取得できませんでした。",
+        "ru": "Не удалось получить действительные cookies SimpCity.",
+        "zh": "无法获取有效的 SimpCity cookie。"
+    },
     "Imagen descargada: {path}": {
         "es": "Imagen descargada: {path}",
         "en": "Image downloaded: {path}",
@@ -191,6 +263,30 @@
         "ru": "Загрузка страницы завершена.",
         "zh": "页面下载完成。"
     },
+    "Contraseña de cookies de SimpCity": {
+        "es": "Contraseña de cookies de SimpCity",
+        "en": "SimpCity cookie password",
+        "fr": "Mot de passe des cookies SimpCity",
+        "ja": "SimpCity クッキーパスワード",
+        "ru": "Пароль cookies SimpCity",
+        "zh": "SimpCity Cookie 密码"
+    },
+    "Introduce la contraseña usada para cifrar tus cookies de SimpCity. No se guardará.": {
+        "es": "Introduce la contraseña usada para cifrar tus cookies de SimpCity. No se guardará.",
+        "en": "Enter the password used to encrypt your SimpCity cookies. It will not be stored.",
+        "fr": "Saisissez le mot de passe utilisé pour chiffrer vos cookies SimpCity. Il ne sera pas enregistré.",
+        "ja": "SimpCity のクッキーを暗号化するために使用したパスワードを入力してください。保存されません。",
+        "ru": "Введите пароль, использованный для шифрования cookies SimpCity. Он не будет сохранён.",
+        "zh": "输入用于加密 SimpCity cookie 的密码。该密码不会被保存。"
+    },
+    "Descarga de SimpCity cancelada: no se proporcionó contraseña de cookies.": {
+        "es": "Descarga de SimpCity cancelada: no se proporcionó contraseña de cookies.",
+        "en": "SimpCity download canceled: no cookie password was provided.",
+        "fr": "Téléchargement SimpCity annulé : aucun mot de passe de cookies fourni.",
+        "ja": "SimpCity のダウンロードをキャンセルしました：クッキーパスワードが入力されていません。",
+        "ru": "Загрузка SimpCity отменена: пароль cookies не предоставлен.",
+        "zh": "SimpCity 下载已取消：未提供 cookie 密码。"
+    },
     "General": {
         "es": "Opciones Generales",
         "en": "General Options",
@@ -198,6 +294,86 @@
         "ja": "一般オプション",
         "ru": "Общие настройки",
         "zh": "常规选项"
+    },
+    "Privacy & Cookies": {
+        "es": "Privacidad y cookies",
+        "en": "Privacy & Cookies",
+        "fr": "Confidentialité et cookies",
+        "ja": "プライバシーとクッキー",
+        "ru": "Конфиденциальность и cookies",
+        "zh": "隐私与 Cookie"
+    },
+    "Las cookies cifradas de SimpCity se guardan localmente para evitar nuevos inicios de sesión.": {
+        "es": "Las cookies cifradas de SimpCity se guardan localmente para evitar nuevos inicios de sesión.",
+        "en": "Encrypted SimpCity cookies are stored locally so you can skip new logins.",
+        "fr": "Les cookies SimpCity chiffrés sont stockés localement pour éviter de nouvelles connexions.",
+        "ja": "暗号化された SimpCity クッキーはローカルに保存され、再ログインを省略できます。",
+        "ru": "Зашифрованные cookies SimpCity хранятся локально, чтобы не входить повторно.",
+        "zh": "加密的 SimpCity cookie 会本地存储，以免再次登录。"
+    },
+    "Permitir guardar cookies cifradas de SimpCity": {
+        "es": "Permitir guardar cookies cifradas de SimpCity",
+        "en": "Allow encrypted SimpCity cookies to be stored",
+        "fr": "Autoriser l'enregistrement des cookies SimpCity chiffrés",
+        "ja": "暗号化された SimpCity クッキーの保存を許可",
+        "ru": "Разрешить сохранять зашифрованные cookies SimpCity",
+        "zh": "允许存储加密的 SimpCity cookie"
+    },
+    "Las cookies se guardan en: {path}": {
+        "es": "Las cookies se guardan en: {path}",
+        "en": "Cookies are stored at: {path}",
+        "fr": "Les cookies sont stockés dans : {path}",
+        "ja": "クッキーの保存先: {path}",
+        "ru": "Cookies хранятся по пути: {path}",
+        "zh": "Cookie 存储位置：{path}"
+    },
+    "Eliminar cookies cifradas": {
+        "es": "Eliminar cookies cifradas",
+        "en": "Delete encrypted cookies",
+        "fr": "Supprimer les cookies chiffrés",
+        "ja": "暗号化されたクッキーを削除",
+        "ru": "Удалить зашифрованные cookies",
+        "zh": "删除加密的 cookie"
+    },
+    "Información": {
+        "es": "Información",
+        "en": "Info",
+        "fr": "Info",
+        "ja": "情報",
+        "ru": "Информация",
+        "zh": "信息"
+    },
+    "No se encontraron cookies cifradas de SimpCity.": {
+        "es": "No se encontraron cookies cifradas de SimpCity.",
+        "en": "No encrypted SimpCity cookies were found.",
+        "fr": "Aucun cookie SimpCity chiffré trouvé.",
+        "ja": "暗号化された SimpCity クッキーが見つかりませんでした。",
+        "ru": "Зашифрованные cookies SimpCity не найдены.",
+        "zh": "未找到加密的 SimpCity cookie。"
+    },
+    "¿Deseas eliminar las cookies cifradas de SimpCity?": {
+        "es": "¿Deseas eliminar las cookies cifradas de SimpCity?",
+        "en": "Do you want to delete the encrypted SimpCity cookies?",
+        "fr": "Souhaitez-vous supprimer les cookies SimpCity chiffrés ?",
+        "ja": "暗号化された SimpCity クッキーを削除しますか？",
+        "ru": "Вы хотите удалить зашифрованные cookies SimpCity?",
+        "zh": "要删除加密的 SimpCity cookie 吗？"
+    },
+    "Cookies cifradas eliminadas.": {
+        "es": "Cookies cifradas eliminadas.",
+        "en": "Encrypted cookies deleted.",
+        "fr": "Cookies chiffrés supprimés.",
+        "ja": "暗号化されたクッキーを削除しました。",
+        "ru": "Зашифрованные cookies удалены.",
+        "zh": "加密的 cookie 已删除。"
+    },
+    "No se pudieron eliminar las cookies cifradas: {exc}": {
+        "es": "No se pudieron eliminar las cookies cifradas: {exc}",
+        "en": "Encrypted cookies could not be deleted: {exc}",
+        "fr": "Impossible de supprimer les cookies chiffrés : {exc}",
+        "ja": "暗号化されたクッキーを削除できませんでした: {exc}",
+        "ru": "Не удалось удалить зашифрованные cookies: {exc}",
+        "zh": "无法删除加密的 cookie：{exc}"
     },
     "Select Theme": {
         "es": "Seleccionar Tema",
