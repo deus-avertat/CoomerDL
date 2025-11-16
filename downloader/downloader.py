@@ -34,8 +34,10 @@ class Downloader:
 			"Accept": "text/css"
 		}
 		self.media_counter = 0
-		self.session = requests.Session()
-		self.max_workers = max_workers  
+		self._session_local = threading.local()
+		self._session_lock = threading.Lock()
+		self._sessions = set()
+		self.max_workers = max_workers
 		self.executor = ThreadPoolExecutor(max_workers=self.max_workers)
 		self.rate_limit = Semaphore(self.max_workers)  
 		self.domain_locks = defaultdict(lambda: Semaphore(self.max_workers))
@@ -82,7 +84,29 @@ class Downloader:
 		self.init_db()
 		self.load_download_cache()
 		self.load_partial_downloads()
-		
+
+	def _create_session(self):
+		session = requests.Session()
+		with self._session_lock:
+			self._sessions.add(session)
+		return session
+
+	def _get_session(self):
+		session = getattr(self._session_local, "session", None)
+		if session is None:
+			session = self._create_session()
+			self._session_local.session = session
+		return session
+
+	def _close_sessions(self):
+		with self._session_lock:
+			sessions = list(self._sessions)
+			self._sessions.clear()
+		for session in sessions:
+			try:
+				session.close()
+			except Exception:
+				pass
 
 	def init_db(self):
 		self.db_connection = sqlite3.connect(self.db_path, check_same_thread=False)
@@ -312,6 +336,7 @@ class Downloader:
 				self._is_paused = False
 			if self.executor:
 				self.executor.shutdown(wait=True)
+			self._close_sessions()
 			self._reset_futures()
 			if self.enable_widgets_callback:
 				self.enable_widgets_callback()
@@ -335,6 +360,7 @@ class Downloader:
 		parsed = urlparse(url)
 		domain = parsed.netloc
 		path = parsed.path
+		session = self._get_session()
 
 		for attempt in range(max_retries + 1):
 			if self.cancel_requested.is_set():
@@ -351,7 +377,7 @@ class Downloader:
 				try:
 					self.domain_last_request[domain] = time.time()
 					
-					response = self.session.get(url, stream=True, headers=headers, timeout=self.stream_read_timeout)
+					response = session.get(url, stream=True, headers=headers, timeout=self.stream_read_timeout)
 					sc = response.status_code
 
 					if sc in (403, 404) and ("coomer" in domain or "kemono" in domain):
@@ -371,7 +397,7 @@ class Downloader:
 								self.update_progress_callback(0, 0, status=f"Subdomain found: {found}")
 
 
-							response = self.session.get(
+							response = session.get(
 								alt_url,
 								stream=True,
 								headers=headers,
@@ -455,6 +481,8 @@ class Downloader:
 		else:
 			base_domains = [host]
 
+		session = self._get_session()
+
 		for base in base_domains:
 			for i in range(1, max_subdomains + 1):
 				domain = f"n{i}.{base}"
@@ -464,7 +492,7 @@ class Downloader:
 					self.update_progress_callback(0, 0, status=f"Testing subdomain: {domain}")
 
 				try:
-					resp = self.session.get(test_url, headers=self.headers,
+					resp = session.get(test_url, headers=self.headers,
 						timeout=self.stream_read_timeout, stream=True)
 					if resp.status_code == 200:
 						return test_url
@@ -484,6 +512,7 @@ class Downloader:
 		all_posts = []
 		offset = initial_offset
 		user_id_encoded = quote_plus(user_id)
+		session = self._get_session()
 		while True:
 			if self.cancel_requested.is_set():
 				return all_posts
@@ -497,7 +526,7 @@ class Downloader:
 				self.log(self.tr("Fetching user posts from {api_url}", api_url=api_url))
 			try:
 
-				response = self.session.get(
+				response = session.get(
 					api_url,
 					headers=self.headers,
 					timeout=self.stream_read_timeout,
@@ -1019,9 +1048,10 @@ class Downloader:
 	def fetch_single_post(self, site, post_id, service):
 		api_url = f"https://{site}/api/v1/{service}/post/{post_id}"
 		self.log(self.tr(f"Fetching post from {api_url}"))
+		session = self._get_session()
 		try:
 			with self.rate_limit:
-				response = self.session.get(
+				response = session.get(
 					api_url,
 					headers=self.headers,
 					timeout=self.stream_read_timeout,
