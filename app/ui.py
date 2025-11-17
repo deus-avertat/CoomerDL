@@ -168,12 +168,12 @@ class PostSelectionDialog(ctk.CTkToplevel):
 
         self._sort_option_map = {
             tr("Original order"): ("order", False),
-            tr("Attachments (High to Low)"): ("attachments", True),
-            tr("Attachments (Low to High)"): ("attachments", False),
-            tr("Images (High to Low)"): ("images", True),
-            tr("Images (Low to High)"): ("images", False),
-            tr("Videos (High to Low)"): ("videos", True),
-            tr("Videos (Low to High)"): ("videos", False),
+            tr("Attachments (↓)"): ("attachments", True),
+            tr("Attachments (↑)"): ("attachments", False),
+            tr("Images (↓)"): ("images", True),
+            tr("Images (↑)"): ("images", False),
+            tr("Videos (↓)"): ("videos", True),
+            tr("Videos (↑)"): ("videos", False),
         }
         sort_values = list(self._sort_option_map.keys())
         self.metric_sort_combobox = ctk.CTkComboBox(
