@@ -56,7 +56,7 @@ VIDEO_EXTENSIONS = {
 }
 
 class PostSelectionDialog(ctk.CTkToplevel):
-    def __init__(self, parent, posts, tr, user_id, service, site):
+    def __init__(self, parent, posts, tr, user_id, service, site, log_callback=None):
         super().__init__(parent)
         self.title(tr("Select posts"))
         self.geometry("600x800")
@@ -73,6 +73,12 @@ class PostSelectionDialog(ctk.CTkToplevel):
         self._post_search_texts = {}
         self._post_entries = []
         self._no_results_label = None
+        self._size_formatter = functools.partial(self._format_bytes, precision=1)
+        self._log_callback = log_callback
+        self._site = site
+        self._media_base = f"https://{site}/" if site else None
+        self._head_cache = {}
+        self._remaining_remote_lookups = 10
 
         years_set = set()
 
@@ -125,6 +131,26 @@ class PostSelectionDialog(ctk.CTkToplevel):
             )
             display_text += f"\n{metrics_text}"
 
+            video_details = metrics.get("video_details") or []
+            if video_details:
+                video_lines = []
+                for idx, detail in enumerate(video_details, start=1):
+                    parts = []
+                    size_bytes = detail.get("size_bytes")
+                    duration_seconds = detail.get("duration_seconds")
+
+                    if size_bytes is not None:
+                        parts.append(self._size_formatter(size_bytes))
+                    if duration_seconds is not None:
+                        parts.append(self._format_duration(int(duration_seconds)))
+
+                    label = detail.get("name") or f"{tr('Video')} {idx}"
+                    if parts:
+                        label = f"{label}: {', '.join(parts)}"
+                    video_lines.append(label)
+
+                display_text += f"\n{tr('Video details:')}\n" + "\n".join(video_lines)
+
             var = tk.BooleanVar(value=True)
             checkbox = ctk.CTkCheckBox(
                 self.scrollable,
@@ -174,6 +200,10 @@ class PostSelectionDialog(ctk.CTkToplevel):
             tr("Images (Low to High)"): ("images", False),
             tr("Videos (High to Low)"): ("videos", True),
             tr("Videos (Low to High)"): ("videos", False),
+            tr("Video size (High to Low)"): ("largest_video_size", True),
+            tr("Video size (Low to High)"): ("largest_video_size", False),
+            tr("Video length (Long to Short)"): ("longest_video_duration", True),
+            tr("Video length (Short to Long)"): ("longest_video_duration", False),
         }
         sort_values = list(self._sort_option_map.keys())
         self.metric_sort_combobox = ctk.CTkComboBox(
@@ -551,16 +581,329 @@ class PostSelectionDialog(ctk.CTkToplevel):
             if isinstance(attachment, dict):
                 media_entries.append(attachment)
 
-        metrics = {"attachments": len(media_entries), "images": 0, "videos": 0}
+        metrics = {
+            "attachments": len(media_entries),
+            "images": 0,
+            "videos": 0,
+            "video_details": [],
+            "total_video_size": 0,
+            "largest_video_size": 0,
+            "longest_video_duration": 0,
+        }
+
         for entry in media_entries:
-            source = str(entry.get("path") or entry.get("url") or entry.get("name") or "").lower()
-            path = source.split("?")[0]
-            _, ext = os.path.splitext(path)
-            if ext in IMAGE_EXTENSIONS:
+            media_type = self._detect_media_type(entry)
+            if media_type == "image":
                 metrics["images"] += 1
-            elif ext in VIDEO_EXTENSIONS:
-                metrics["videos"] += 1
+                continue
+
+            if media_type != "video":
+                self._log_debug(
+                    f"Skipping non-media attachment: keys={list(entry.keys()) if isinstance(entry, dict) else type(entry)}"
+                )
+                continue
+
+            metrics["videos"] += 1
+            detail = self._extract_video_detail(entry, metrics["videos"])
+            if detail:
+                metrics["video_details"].append(detail)
+                size_bytes = detail.get("size_bytes")
+                if isinstance(size_bytes, (int, float)):
+                    metrics["total_video_size"] += size_bytes
+                    metrics["largest_video_size"] = max(metrics["largest_video_size"], size_bytes)
+                duration_seconds = detail.get("duration_seconds")
+                if isinstance(duration_seconds, (int, float)):
+                    metrics["longest_video_duration"] = max(
+                        metrics["longest_video_duration"], duration_seconds
+                    )
+                if size_bytes is None or duration_seconds is None:
+                    self._log_debug(
+                        f"Missing video metrics for attachment: name={detail.get('name')}, "
+                        f"size={size_bytes}, duration={duration_seconds}, keys={list(entry.keys()) if isinstance(entry, dict) else type(entry)}"
+                    )
+            else:
+                self._log_debug(
+                    f"Unable to extract video detail for attachment with keys={list(entry.keys()) if isinstance(entry, dict) else type(entry)}"
+                )
         return metrics
+
+    def _detect_media_type(self, entry):
+        source = str(entry.get("path") or entry.get("url") or entry.get("name") or "")
+        lowered = source.lower().split("?")[0]
+        _, ext = os.path.splitext(lowered)
+
+        metadata = entry.get("metadata") if isinstance(entry, dict) else None
+        type_hints = []
+        for candidate in (entry, metadata):
+            if isinstance(candidate, dict):
+                type_hints.extend(
+                    str(candidate.get(key) or "").lower()
+                    for key in (
+                        "type",
+                        "mimetype",
+                        "mime",
+                        "media_type",
+                        "content_type",
+                        "mime_type",
+                        "file_type",
+                    )
+                    if key in candidate
+                )
+
+                for bool_key in ("is_video", "video", "isVideo"):
+                    if candidate.get(bool_key) is True:
+                        type_hints.append("video")
+                for bool_key in ("is_image", "image", "isImage"):
+                    if candidate.get(bool_key) is True:
+                        type_hints.append("image")
+
+        if ext in VIDEO_EXTENSIONS or any(hint.startswith("video") for hint in type_hints):
+            return "video"
+
+        if ext in IMAGE_EXTENSIONS or any(hint.startswith("image") for hint in type_hints):
+            return "image"
+
+        return None
+
+    def _extract_video_detail(self, entry, index):
+        size_keys = ("size", "file_size", "filesize", "bytes", "size_bytes", "content_length")
+        duration_keys = (
+            "duration",
+            "length",
+            "video_length",
+            "videoDuration",
+            "duration_seconds",
+        )
+
+        size_bytes = None
+        duration_seconds = None
+
+        metadata = entry.get("metadata") if isinstance(entry, dict) else None
+        candidates = [entry]
+        if isinstance(metadata, dict):
+            candidates.append(metadata)
+
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            for key in size_keys:
+                if key in candidate:
+                    size_bytes = self._parse_size_value(candidate.get(key))
+                    if size_bytes is not None:
+                        break
+            if size_bytes is not None:
+                break
+
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            for key in duration_keys:
+                if key in candidate:
+                    duration_seconds = self._parse_duration_value(candidate.get(key))
+                    if duration_seconds is not None:
+                        break
+            if duration_seconds is not None:
+                break
+
+        name = None
+        if isinstance(entry, dict):
+            name = entry.get("name") or entry.get("path") or entry.get("url")
+        if size_bytes is None or duration_seconds is None:
+            remote_metrics = self._fetch_remote_video_metrics(entry)
+            if remote_metrics:
+                size_bytes = size_bytes if size_bytes is not None else remote_metrics.get("size_bytes")
+                duration_seconds = (
+                    duration_seconds
+                    if duration_seconds is not None
+                    else remote_metrics.get("duration_seconds")
+                )
+
+        return {
+            "name": name,
+            "size_bytes": size_bytes,
+            "duration_seconds": duration_seconds,
+            "index": index,
+        }
+
+    def _parse_size_value(self, value):
+        numeric = self._parse_positive_number(value)
+        if numeric is not None:
+            return numeric
+
+        if isinstance(value, str):
+            cleaned = value.replace(",", "").strip()
+            match = re.match(r"([0-9]*\.?[0-9]+)\s*([kmgt]?b)?", cleaned, re.IGNORECASE)
+            if match:
+                amount = float(match.group(1))
+                unit = (match.group(2) or "b").lower()
+                multiplier = {
+                    "b": 1,
+                    "kb": 1024,
+                    "mb": 1024 ** 2,
+                    "gb": 1024 ** 3,
+                    "tb": 1024 ** 4,
+                }.get(unit, 1)
+                return amount * multiplier
+
+        if isinstance(value, dict):
+            for nested in value.values():
+                nested_numeric = self._parse_size_value(nested)
+                if nested_numeric is not None:
+                    return nested_numeric
+
+        return None
+
+    def _parse_positive_number(self, value):
+        if value is None:
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if number >= 0 else None
+
+    def _parse_duration_value(self, value):
+        parsed_number = self._parse_positive_number(value)
+        if parsed_number is not None:
+            return parsed_number
+
+        if isinstance(value, str):
+            parts = value.strip().split(":")
+            if 1 <= len(parts) <= 3 and all(part.isdigit() for part in parts):
+                parts = [int(part) for part in parts]
+                while len(parts) < 3:
+                    parts.insert(0, 0)
+                hours, minutes, seconds = parts
+                return hours * 3600 + minutes * 60 + seconds
+
+        if isinstance(value, dict):
+            for nested in value.values():
+                nested_duration = self._parse_duration_value(nested)
+                if nested_duration is not None:
+                    return nested_duration
+
+        return None
+
+    def _fetch_remote_video_metrics(self, entry):
+        if not isinstance(entry, dict):
+            return None
+
+        url = self._build_media_url(entry)
+        if not url:
+            return None
+
+        cache = getattr(self, "_head_cache", None)
+        if cache is None:
+            cache = {}
+            self._head_cache = cache
+
+        if url in cache:
+            return cache[url]
+
+        if getattr(self, "_remaining_remote_lookups", 0) <= 0:
+            self._log_debug(f"Skipping remote metadata lookup for {url}: budget exhausted")
+            cache[url] = None
+            return None
+
+        self._remaining_remote_lookups = max(0, getattr(self, "_remaining_remote_lookups", 0) - 1)
+
+        metrics = {"size_bytes": None, "duration_seconds": None}
+
+        try:
+            response = requests.head(url, allow_redirects=True, timeout=2)
+        except Exception as exc:
+            self._log_debug(f"HEAD request failed for {url}: {exc}")
+            response = None
+
+        if response is not None and response.status_code < 400:
+            headers = {k.lower(): v for k, v in response.headers.items()}
+            content_length = headers.get("content-length")
+            if content_length is not None:
+                metrics["size_bytes"] = self._parse_size_value(content_length)
+
+            for duration_key in (
+                "content-duration",
+                "x-amz-meta-duration",
+                "x-oss-meta-duration",
+                "x-video-duration",
+                "video-duration",
+            ):
+                if duration_key in headers:
+                    metrics["duration_seconds"] = self._parse_duration_value(headers.get(duration_key))
+                    break
+
+            if metrics["duration_seconds"] is None:
+                duration_header = next(
+                    (value for key, value in headers.items() if "duration" in key),
+                    None,
+                )
+                if duration_header is not None:
+                    metrics["duration_seconds"] = self._parse_duration_value(duration_header)
+
+            if response and hasattr(response, "close"):
+                try:
+                    response.close()
+                except Exception:
+                    pass
+        elif response is not None:
+            self._log_debug(
+                f"Remote metadata unavailable for {url}: status={response.status_code}"
+            )
+
+        if metrics["size_bytes"] is None and metrics["duration_seconds"] is None:
+            self._log_debug(
+                f"Remote metadata unavailable for {url} (keys={list(entry.keys())})"
+            )
+            self._head_cache[url] = None
+            return None
+
+        self._head_cache[url] = metrics
+        return metrics
+
+    def _build_media_url(self, entry):
+        path = None
+        if isinstance(entry, dict):
+            path = entry.get("path") or entry.get("url") or entry.get("name")
+
+        if not path:
+            return None
+
+        if str(path).startswith("http://") or str(path).startswith("https://"):
+            return path
+
+        media_base = getattr(self, "_media_base", None)
+        if media_base:
+            normalized = path if str(path).startswith("/") else f"/{path}"
+            return f"{media_base.rstrip('/')}{normalized}"
+
+        return None
+
+    def _log_debug(self, message):
+        log_callback = getattr(self, "_log_callback", None)
+        if callable(log_callback):
+            try:
+                log_callback(message)
+            except Exception:
+                pass
+
+    def _format_bytes(self, num_bytes, precision=2):
+        if num_bytes is None:
+            return ""
+        suffixes = ["B", "KB", "MB", "GB", "TB"]
+        num = float(num_bytes)
+        order = 0
+        while num >= 1024 and order < len(suffixes) - 1:
+            num /= 1024.0
+            order += 1
+        return f"{num:.{precision}f} {suffixes[order]}"
+
+    def _format_duration(self, seconds):
+        seconds = max(int(seconds), 0)
+        hours, remainder = divmod(seconds, 3600)
+        minutes, secs = divmod(remainder, 60)
+        if hours:
+            return f"{hours:d}:{minutes:02d}:{secs:02d}"
+        return f"{minutes:d}:{secs:02d}"
 
     def _parse_date_input(self, value):
         try:
@@ -1657,7 +2000,15 @@ class ImageDownloaderApp(ctk.CTk):
                 )
                 return None
 
-            selection_dialog = PostSelectionDialog(self, posts, self.tr, user, service, site)
+            selection_dialog = PostSelectionDialog(
+                self,
+                posts,
+                self.tr,
+                user,
+                service,
+                site,
+                log_callback=self.add_log_message_safe,
+            )
             confirmed, selected_posts = selection_dialog.show()
             if not confirmed:
                 return None
