@@ -8,6 +8,7 @@
     "file_naming_mode": 3,
     "http_timeout": 15.0,
     "save_simpcity_cookies": false,
+    "skip_large_downloads": false,
     "post_selection_filter_preset": {
         "keywords": "Video",
         "match_all_keywords": false,

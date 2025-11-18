@@ -37,13 +37,13 @@ class SettingsWindow:
 
     def load_settings(self):
         if not os.path.exists(self.CONFIG_PATH):
-            return {'max_downloads': 3, 'folder_structure': 'default', 'language': 'en', 'theme': 'System'}
+            return {'max_downloads': 3, 'folder_structure': 'default', 'language': 'en', 'theme': 'System', 'skip_large_downloads': False}
 
         try:
             with open(self.CONFIG_PATH, 'r') as file:
                 return json.load(file)
         except (FileNotFoundError, json.JSONDecodeError):
-            return {'max_downloads': 3, 'folder_structure': 'default', 'language': 'en', 'theme': 'System'}
+            return {'max_downloads': 3, 'folder_structure': 'default', 'language': 'en', 'theme': 'System', 'skip_large_downloads': False}
 
     def save_settings(self):
         os.makedirs(os.path.dirname(self.CONFIG_PATH), exist_ok=True)
@@ -489,11 +489,19 @@ class SettingsWindow:
         http_timeout_entry.insert(0, str(self.settings.get('http_timeout', 20.0)))
         http_timeout_entry.grid(row=6, column=1, pady=5, padx=(10, 0), sticky="w")
 
+        self.skip_large_downloads_var = tk.BooleanVar(value=bool(self.settings.get('skip_large_downloads', False)))
+        skip_large_switch = ctk.CTkSwitch(
+            downloads_frame,
+            text=self.translate("Skip downloads larger than 1 GB"),
+            variable=self.skip_large_downloads_var,
+        )
+        skip_large_switch.grid(row=7, column=0, columnspan=2, pady=5, sticky="w")
+
         # ----------------------------
         # File naming mode
         # ----------------------------
         naming_label = ctk.CTkLabel(downloads_frame, text=self.translate("File Naming Mode"))
-        naming_label.grid(row=7, column=0, pady=5, sticky="w")
+        naming_label.grid(row=8, column=0, pady=5, sticky="w")
 
         naming_options = [
             "Use File ID (default)",
@@ -510,7 +518,7 @@ class SettingsWindow:
             width=200
         )
 
-        # 2) Recuperar el valor desde settings (puede ser int o str). 
+        # 2) Recuperar el valor desde settings (puede ser int o str).
         #    Si es int (0,1,2,3) mapeamos a la cadena; si es str, la usamos tal cual.
         naming_mode = self.settings.get('file_naming_mode', 0)
         if isinstance(naming_mode, int):
@@ -526,7 +534,7 @@ class SettingsWindow:
             else:
                 file_naming_combobox.set(naming_options[0])
 
-        file_naming_combobox.grid(row=7, column=1, pady=5, padx=(10, 0), sticky="w")
+        file_naming_combobox.grid(row=8, column=1, pady=5, padx=(10, 0), sticky="w")
 
 
         # ----------------------------
@@ -541,10 +549,11 @@ class SettingsWindow:
                 retry_combobox,
                 retry_interval_entry,
                 http_timeout_entry,
-                file_naming_combobox
+                file_naming_combobox,
+                skip_large_switch,
             )
         )
-        apply_download_button.grid(row=8, column=1, pady=10, sticky="e")
+        apply_download_button.grid(row=9, column=1, pady=10, sticky="e")
 
 
 
@@ -655,7 +664,7 @@ class SettingsWindow:
             except Exception as e:
                 messagebox.showerror(self.translate("Error"), self.translate(f"Error clearing database: {e}"))
 
-    def apply_download_settings(self,max_downloads_combobox,folder_structure_combobox,retry_combobox,retry_interval_entry,http_timeout_entry,file_naming_combobox):
+    def apply_download_settings(self,max_downloads_combobox,folder_structure_combobox,retry_combobox,retry_interval_entry,http_timeout_entry,file_naming_combobox,skip_large_switch):
         try:
 
             max_downloads = int(max_downloads_combobox.get())
@@ -666,6 +675,8 @@ class SettingsWindow:
             http_timeout = float(http_timeout_entry.get())
             if http_timeout <= 0:
                 raise ValueError("Timeout must be positive")
+
+            skip_large_downloads = bool(skip_large_switch.get())
 
             file_naming_mode_str = file_naming_combobox.get()
 
@@ -684,6 +695,7 @@ class SettingsWindow:
             self.settings['retry_interval'] = retry_interval
             self.settings['http_timeout'] = http_timeout
             self.settings['file_naming_mode'] = numeric_mode
+            self.settings['skip_large_downloads'] = skip_large_downloads
 
             self.save_settings()
 
@@ -697,6 +709,7 @@ class SettingsWindow:
                     self.downloader.retry_interval = retry_interval
 
                 self.downloader.file_naming_mode = numeric_mode
+                self.downloader.skip_large_downloads = skip_large_downloads
                 if hasattr(self.downloader, "set_stream_timeout"):
                     self.downloader.set_stream_timeout(http_timeout)
                 else:

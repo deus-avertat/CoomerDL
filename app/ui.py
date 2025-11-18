@@ -171,6 +171,7 @@ class ImageDownloaderApp(ctk.CTk):
         max_retries_setting = max(0, min(max_retries_setting, 5))
         retry_interval_setting = self.settings.get('retry_interval', 2.0)
         folder_structure_setting = self.settings.get('folder_structure', 'default')
+        skip_large_downloads = bool(self.settings.get('skip_large_downloads', False))
         
         # Load download folder
         self.download_folder = self.load_download_folder() 
@@ -188,6 +189,7 @@ class ImageDownloaderApp(ctk.CTk):
             folder_structure=folder_structure_setting,
             max_retries=max_retries_setting,
             stream_read_timeout=self.request_timeout,
+            skip_large_downloads=skip_large_downloads,
         ))
         
         self.settings_window.downloader = self.default_downloader

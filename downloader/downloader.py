@@ -51,6 +51,8 @@ class Downloader:
 		self.download_images = download_images
 		self.download_videos = download_videos
 		self.download_compressed = download_compressed
+		self.skip_large_downloads = bool(skip_large_downloads)
+		self.large_file_threshold = large_file_threshold_bytes or (1024 ** 3)
 		self.futures = []
 		self.futures_lock = threading.Lock()
 		self.total_files = 0
@@ -712,6 +714,19 @@ class Downloader:
 				self.remove_partial_download(media_url)
 			return
 
+		if self.skip_large_downloads and total_size and total_size > self.large_file_threshold:
+			limit_gb = self.large_file_threshold / (1024 ** 3)
+			message = self.tr("Skipping download over {limit} GB: {media_url}",
+					limit=f"{limit_gb:.2f}", media_url=media_url) if self.tr else \
+				f"Skipping download over {limit_gb:.2f} GB: {media_url}"
+			self.log(message)
+			if os.path.exists(tmp_path):
+				os.remove(tmp_path)
+			with self.file_lock:
+				self.skipped_files.append(final_path)
+				self.remove_partial_download(media_url)
+			return
+
 		self.log(f"Starting download from {media_url}")
 
 		for attempt in range(self.max_retries + 1):
@@ -764,6 +779,20 @@ class Downloader:
 							total_size = max(total_size, downloaded_size + length_value)
 						else:
 							total_size = length_value
+
+				if self.skip_large_downloads and total_size and total_size > self.large_file_threshold:
+					limit_gb = self.large_file_threshold / (1024 ** 3)
+					message = self.tr("Skipping download over {limit} GB: {media_url}",
+							limit=f"{limit_gb:.2f}", media_url=media_url) if self.tr else \
+						f"Skipping download over {limit_gb:.2f} GB: {media_url}"
+					self.log(message)
+					response.close()
+					if os.path.exists(tmp_path):
+						os.remove(tmp_path)
+					with self.file_lock:
+						self.skipped_files.append(final_path)
+						self.remove_partial_download(media_url)
+					return
 
 				self.update_partial_download(media_url, tmp_path, downloaded_size, total_size, user_id, post_id)
 				last_partial_update = time.time()

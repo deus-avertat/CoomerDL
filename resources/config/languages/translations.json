@@ -1274,6 +1274,22 @@
         "ru": "❌ Недопустимый поддомен: {domain}",
         "zh": "❌ 无效的子域名：{domain}"
     },
+    "Skip downloads larger than 1 GB": {
+        "es": "Omitir descargas mayores a 1 GB",
+        "en": "Skip downloads larger than 1 GB",
+        "fr": "Ignorer les téléchargements supérieurs à 1 Go",
+        "ja": "1GB を超えるダウンロードをスキップ",
+        "ru": "Пропускать загрузки больше 1 ГБ",
+        "zh": "跳过大于 1 GB 的下载"
+    },
+    "Skipping download over {limit} GB: {media_url}": {
+        "es": "Omitiendo descarga mayor a {limit} GB: {media_url}",
+        "en": "Skipping download over {limit} GB: {media_url}",
+        "fr": "Ignorer le téléchargement supérieur à {limit} Go : {media_url}",
+        "ja": "{limit}GB を超えるためダウンロードをスキップ: {media_url}",
+        "ru": "Пропуск загрузки больше {limit} ГБ: {media_url}",
+        "zh": "跳过超过 {limit} GB 的下载：{media_url}"
+    },
     "subdomain_error": {
         "es": "❌ Error al probar {domain}: {error}",
         "en": "❌ Error testing {domain}: {error}",
