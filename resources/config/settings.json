@@ -1,11 +1,18 @@
 {
-    "max_downloads": 3,
+    "max_downloads": 5,
     "folder_structure": "default",
     "language": "en",
     "theme": "Dark",
     "max_retries": 5,
     "retry_interval": 2.0,
     "file_naming_mode": 3,
-    "http_timeout": 20.0,
-    "save_simpcity_cookies": false
+    "http_timeout": 15.0,
+    "save_simpcity_cookies": false,
+    "post_selection_filter_preset": {
+        "keywords": "Video",
+        "match_all_keywords": false,
+        "regex_mode": false,
+        "tags": [],
+        "match_all_tags": false
+    }
 }

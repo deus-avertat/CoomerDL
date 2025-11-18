@@ -5,6 +5,7 @@ import queue
 import sys
 import re
 import os
+import shutil
 import threading
 import time
 import tkinter as tk
@@ -102,6 +103,8 @@ class ImageDownloaderApp(ctk.CTk):
         self.history_service_filter_value = "__all__"
         self.history_service_display_map = {}
         self.cancelled_downloader_snapshot = None
+        self.history_window = None
+        self.history_window_vars = {}
 
         self._managed_downloaders = set()
         self._managed_downloaders_lock = threading.Lock()
@@ -437,12 +440,23 @@ class ImageDownloaderApp(ctk.CTk):
         self.history_frame = ctk.CTkFrame(self.log_history_container, width=260)
         self.history_frame.pack(side='left', fill='y', padx=(10, 0))
 
+        self.history_header_frame = ctk.CTkFrame(self.history_frame)
+        self.history_header_frame.pack(fill='x', padx=5, pady=(5, 5))
+
         self.history_title_label = ctk.CTkLabel(
-            self.history_frame,
+            self.history_header_frame,
             text=self.tr("Recent Sessions"),
             font=("Arial", 14, "bold")
         )
-        self.history_title_label.pack(fill='x', padx=5, pady=(5, 5))
+        self.history_title_label.pack(side='left', fill='x', expand=True)
+
+        self.history_window_button = ctk.CTkButton(
+            self.history_header_frame,
+            width=30,
+            text=self.tr("History"),
+            command=self.open_history_window
+        )
+        self.history_window_button.pack(side='right', padx=(5, 0))
 
         self.history_search_var = tk.StringVar()
         self.history_search_var.trace_add("write", lambda *_: self.update_history_display())
@@ -554,10 +568,13 @@ class ImageDownloaderApp(ctk.CTk):
 
         if hasattr(self, "history_title_label"):
             self.history_title_label.configure(text=self.tr("Recent Sessions"))
+        if hasattr(self, "history_window_button"):
+            self.history_window_button.configure(text=self.tr("History"))
         if hasattr(self, "history_search_entry"):
             self.history_search_entry.configure(placeholder_text=self.tr("Search sessions..."))
         self.refresh_history_filters()
         self.update_history_display()
+        self.update_history_window_texts()
 
 
     def open_download_folder(self, event=None):
@@ -1633,6 +1650,380 @@ class ImageDownloaderApp(ctk.CTk):
             )
             counts_label = ctk.CTkLabel(item_frame, text=counts_text, justify='left', anchor='w', font=("Arial", 11))
             counts_label.pack(fill='x', padx=5, pady=(0, 5))
+
+        self.update_history_window_display()
+
+    def open_history_window(self):
+        if self.history_window is not None and self.history_window.winfo_exists():
+            self.history_window.focus_force()
+            self.update_history_window_display()
+            return
+
+        self.history_window = ctk.CTkToplevel(self)
+        self.history_window.title(self.tr("Download History"))
+        self.history_window.geometry("900x620")
+        self.history_window.protocol("WM_DELETE_WINDOW", self.close_history_window)
+
+        controls = ctk.CTkFrame(self.history_window)
+        controls.pack(fill='x', padx=10, pady=(10, 5))
+
+        search_var = tk.StringVar()
+        search_var.trace_add("write", lambda *_: self.update_history_window_display())
+        self.history_window_vars["search_var"] = search_var
+        search_entry = ctk.CTkEntry(controls, placeholder_text=self.tr("Search sessions..."), textvariable=search_var)
+        search_entry.pack(side='left', fill='x', expand=True, padx=(0, 10))
+        self.history_window_vars["search_entry"] = search_entry
+
+        service_var = tk.StringVar()
+        status_var = tk.StringVar()
+        self.history_window_vars.update({
+            "service_var": service_var,
+            "status_var": status_var,
+        })
+
+        self.history_window_vars["service_filter"] = ctk.CTkComboBox(
+            controls,
+            values=[],
+            command=lambda _choice=None: self.on_history_window_service_selected(),
+            variable=service_var,
+            width=170,
+        )
+        self.history_window_vars["service_filter"].pack(side='left', padx=(0, 10))
+
+        self.history_window_vars["status_filter"] = ctk.CTkComboBox(
+            controls,
+            values=[],
+            command=lambda _choice=None: self.on_history_window_status_selected(),
+            variable=status_var,
+            width=140,
+        )
+        self.history_window_vars["status_filter"].pack(side='left', padx=(0, 10))
+
+        sort_options = {
+            "finished_desc": self.tr("Newest first"),
+            "finished_asc": self.tr("Oldest first"),
+            "service": self.tr("Service A-Z"),
+            "user": self.tr("User A-Z"),
+        }
+        self.history_window_vars["sort_options_map"] = sort_options
+        self.history_window_vars["sort_key"] = "finished_desc"
+        sort_display_var = tk.StringVar(value=sort_options["finished_desc"])
+        self.history_window_vars["sort_display_var"] = sort_display_var
+        self.history_window_vars["sort_filter"] = ctk.CTkComboBox(
+            controls,
+            values=list(sort_options.values()),
+            command=lambda _choice=None: self.on_history_window_sort_selected(),
+            variable=sort_display_var,
+            width=140,
+        )
+        self.history_window_vars["sort_filter"].pack(side='left')
+
+        results_frame = ctk.CTkFrame(self.history_window)
+        results_frame.pack(fill='x', padx=10, pady=(0, 5))
+        self.history_window_vars["results_label"] = ctk.CTkLabel(results_frame, text="")
+        self.history_window_vars["results_label"].pack(side='left')
+
+        self.history_window_vars["list_frame"] = ctk.CTkScrollableFrame(self.history_window)
+        self.history_window_vars["list_frame"].pack(fill='both', expand=True, padx=10, pady=(0, 10))
+
+        self.refresh_history_window_filters()
+        self.update_history_window_display()
+
+    def close_history_window(self):
+        if self.history_window is not None and self.history_window.winfo_exists():
+            self.history_window.destroy()
+        self.history_window = None
+
+    def on_history_window_service_selected(self):
+        self.update_history_window_display()
+
+    def on_history_window_status_selected(self):
+        self.update_history_window_display()
+
+    def on_history_window_sort_selected(self):
+        sort_filter = self.history_window_vars.get("sort_filter")
+        sort_options = self.history_window_vars.get("sort_options_map", {})
+        if sort_filter is not None and sort_options:
+            selected_label = sort_filter.get()
+            for key, label in sort_options.items():
+                if label == selected_label:
+                    self.history_window_vars["sort_key"] = key
+                    break
+        self.update_history_window_display()
+
+    def refresh_history_window_filters(self):
+        if self.history_window is None or not self.history_window.winfo_exists():
+            return
+
+        service_filter: ctk.CTkComboBox = self.history_window_vars.get("service_filter")
+        status_filter: ctk.CTkComboBox = self.history_window_vars.get("status_filter")
+
+        services = sorted({entry.get("service") or "" for entry in (self.download_history or [])})
+        service_map = {self.tr("All Services"): "__all__"}
+        for service in services:
+            display_name = service if service else self.tr("Unknown Service")
+            service_map[display_name] = service
+        self.history_window_vars["service_display_map"] = service_map
+        if service_filter is not None:
+            service_filter.configure(values=list(service_map.keys()))
+            current_display = next(
+                (display for display, value in service_map.items() if
+                 value == self.history_window_vars.get("service_var").get()),
+                None,
+            )
+            if not current_display:
+                current_display = list(service_map.keys())[0]
+                self.history_window_vars.get("service_var").set(service_map[current_display])
+            service_filter.set(current_display)
+
+        status_values = sorted({entry.get("status") or "" for entry in (self.download_history or [])})
+        status_map = {self.tr("All Statuses"): "__all__"}
+        for status in status_values:
+            display_status = status.title() if status else self.tr("Unknown Status")
+            status_map[display_status] = status
+        self.history_window_vars["status_display_map"] = status_map
+        if status_filter is not None:
+            status_filter.configure(values=list(status_map.keys()))
+            current_status_display = next(
+                (display for display, value in status_map.items() if
+                 value == self.history_window_vars.get("status_var").get()),
+                None,
+            )
+            if not current_status_display:
+                current_status_display = list(status_map.keys())[0]
+                self.history_window_vars.get("status_var").set(status_map[current_status_display])
+            status_filter.set(current_status_display)
+
+    def update_history_window_display(self):
+        if self.history_window is None or not self.history_window.winfo_exists():
+            return
+
+        self.refresh_history_window_filters()
+
+        list_frame: ctk.CTkScrollableFrame = self.history_window_vars.get("list_frame")
+        if list_frame is None:
+            return
+
+        for widget in list_frame.winfo_children():
+            widget.destroy()
+
+        entries = list(self.download_history or [])
+        total_entries = len(entries)
+
+        search_var = self.history_window_vars.get("search_var")
+        query = search_var.get().strip().lower() if search_var else ""
+
+        service_map = self.history_window_vars.get("service_display_map", {})
+        selected_service_display = None
+        service_filter: ctk.CTkComboBox = self.history_window_vars.get("service_filter")
+        if service_filter is not None:
+            selected_service_display = service_filter.get()
+        service_filter_value = service_map.get(selected_service_display, "__all__")
+
+        status_map = self.history_window_vars.get("status_display_map", {})
+        selected_status_display = None
+        status_filter: ctk.CTkComboBox = self.history_window_vars.get("status_filter")
+        if status_filter is not None:
+            selected_status_display = status_filter.get()
+        status_filter_value = status_map.get(selected_status_display, "__all__")
+
+        filtered_entries = []
+        for entry in entries:
+            service_value = entry.get("service") or ""
+            status_value = entry.get("status") or ""
+            matches_service = service_filter_value == "__all__" or service_value == service_filter_value
+            matches_status = status_filter_value == "__all__" or status_value == status_filter_value
+            if not (matches_service and matches_status):
+                continue
+            if query:
+                searchable = [
+                    service_value,
+                    entry.get("site", ""),
+                    entry.get("user", ""),
+                    entry.get("status", ""),
+                    entry.get("url", ""),
+                ]
+                if not any(query in str(value).lower() for value in searchable):
+                    continue
+            filtered_entries.append(entry)
+
+        sort_option = self.history_window_vars.get("sort_key", "finished_desc")
+
+        def parse_date(entry):
+            for key in ("finished_at", "started_at"):
+                value = entry.get(key)
+                if value:
+                    try:
+                        return datetime.datetime.fromisoformat(value)
+                    except ValueError:
+                        continue
+            return datetime.datetime.min
+
+        if sort_option == "finished_asc":
+            filtered_entries.sort(key=parse_date)
+        elif sort_option == "service":
+            filtered_entries.sort(key=lambda e: (e.get("service") or "").lower())
+        elif sort_option == "user":
+            filtered_entries.sort(key=lambda e: (e.get("user") or "").lower())
+        else:
+            filtered_entries.sort(key=parse_date, reverse=True)
+
+        results_label: ctk.CTkLabel = self.history_window_vars.get("results_label")
+        if results_label is not None:
+            if total_entries:
+                results_text = self.tr("Showing {count} of {total} sessions").format(count=len(filtered_entries),
+                                                                                     total=total_entries)
+            else:
+                results_text = self.tr("No sessions recorded yet.")
+            results_label.configure(text=results_text)
+
+        if not filtered_entries:
+            empty_text = self.tr("No sessions match the current filters.") if total_entries else self.tr(
+                "No sessions recorded yet.")
+            empty_label = ctk.CTkLabel(list_frame, text=empty_text, justify='left', anchor='w')
+            empty_label.pack(fill='x', padx=5, pady=5)
+            return
+
+        for entry in filtered_entries:
+            item_frame = ctk.CTkFrame(list_frame)
+            item_frame.pack(fill='x', padx=5, pady=5)
+
+            header_parts = [entry.get("service") or self.tr("Unknown Service"), "-",
+                            (entry.get("status") or "").title()]
+            header_text = " ".join(header_parts)
+            finished_at = entry.get("finished_at")
+            if finished_at:
+                try:
+                    finished_display = datetime.datetime.fromisoformat(finished_at).strftime('%Y-%m-%d %H:%M:%S')
+                except ValueError:
+                    finished_display = finished_at
+                header_text += f"\n{finished_display}"
+
+            header_label = ctk.CTkLabel(item_frame, text=header_text, justify='left', anchor='w',
+                                        font=("Arial", 13, "bold"))
+            header_label.pack(fill='x', padx=5, pady=(5, 2))
+
+            url_display = entry.get("url") or self.tr("N/A")
+            if len(url_display) > 120:
+                url_display = f"{url_display[:117]}..."
+            url_label = ctk.CTkLabel(item_frame, text=url_display, justify='left', anchor='w')
+            url_label.pack(fill='x', padx=5, pady=(0, 2))
+
+            counts = entry.get("counts") or {}
+            duration_text = entry.get("duration_human") or entry.get("duration_seconds") or self.tr("N/A")
+            counts_text = self.tr(
+                "Completed {completed}/{total} • Skipped {skipped} • Failed {failed} • Duration {duration}").format(
+                completed=counts.get('completed', 0),
+                total=counts.get('total', 0),
+                skipped=counts.get('skipped', 0),
+                failed=counts.get('failed', 0),
+                duration=duration_text,
+            )
+            counts_label = ctk.CTkLabel(item_frame, text=counts_text, justify='left', anchor='w')
+            counts_label.pack(fill='x', padx=5, pady=(0, 5))
+
+            actions_frame = ctk.CTkFrame(item_frame)
+            actions_frame.pack(fill='x', padx=5, pady=(0, 5))
+
+            export_meta_btn = ctk.CTkButton(actions_frame, text=self.tr("Export Metadata"), width=140,
+                                            command=lambda e=entry: self.export_history_entry_metadata(e))
+            export_meta_btn.pack(side='left', padx=(0, 5))
+
+            export_logs_btn = ctk.CTkButton(actions_frame, text=self.tr("Export Logs"), width=120,
+                                            command=lambda e=entry: self.export_history_entry_logs(e))
+            export_logs_btn.pack(side='left', padx=(0, 5))
+
+            redownload_btn = ctk.CTkButton(actions_frame, text=self.tr("Re-download"), width=120,
+                                           command=lambda e=entry: self.requeue_history_entry(e))
+            redownload_btn.pack(side='right')
+
+    def export_history_entry_metadata(self, entry):
+        if not entry:
+            messagebox.showwarning(self.tr("Error"), self.tr("No session data available."))
+            return
+        default_name = f"history_{entry.get('session_id', 'session')}.json"
+        export_path = filedialog.asksaveasfilename(defaultextension=".json", initialfile=default_name)
+        if not export_path:
+            return
+        try:
+            with open(export_path, 'w', encoding='utf-8') as f:
+                json.dump(entry, f, ensure_ascii=False, indent=2)
+            self.add_log_message_safe(self.tr("History exported to {path}").format(path=export_path))
+        except Exception as exc:
+            messagebox.showerror(self.tr("Error"), str(exc))
+
+    def export_history_entry_logs(self, entry):
+        log_path_value = entry.get("log_file") or entry.get("metadata_file") if entry else None
+        if not log_path_value:
+            messagebox.showwarning(self.tr("Error"), self.tr("No log file is associated with this session."))
+            return
+        log_path = Path(log_path_value)
+        if not log_path.exists():
+            messagebox.showwarning(self.tr("Error"), self.tr("The log file no longer exists."))
+            return
+        default_name = log_path.name
+        export_path = filedialog.asksaveasfilename(defaultextension=log_path.suffix or ".log", initialfile=default_name)
+        if not export_path:
+            return
+        try:
+            shutil.copy(log_path, export_path)
+            self.add_log_message_safe(self.tr("Logs exported to {path}").format(path=export_path))
+        except Exception as exc:
+            messagebox.showerror(self.tr("Error"), str(exc))
+
+    def requeue_history_entry(self, entry):
+        if not entry or not entry.get("url"):
+            messagebox.showwarning(self.tr("Error"), self.tr("This session is missing a URL to download."))
+            return
+        if self.is_download_active():
+            messagebox.showwarning(self.tr("Download Active"),
+                                   self.tr("Please wait for the active download to finish."))
+            return
+
+        options = entry.get("options") or {}
+        self.apply_history_options(options)
+
+        self.url_entry.delete(0, tk.END)
+        self.url_entry.insert(0, entry.get("url"))
+        self.start_download()
+
+    def apply_history_options(self, options: dict):
+        if not isinstance(options, dict):
+            return
+        if "images" in options:
+            (self.download_images_check.select() if options.get("images") else self.download_images_check.deselect())
+        if "videos" in options:
+            (self.download_videos_check.select() if options.get("videos") else self.download_videos_check.deselect())
+        if "compressed" in options:
+            (self.download_compressed_check.select() if options.get(
+                "compressed") else self.download_compressed_check.deselect())
+
+    def update_history_window_texts(self):
+        if self.history_window is None or not self.history_window.winfo_exists():
+            return
+
+        if "search_entry" in self.history_window_vars:
+            self.history_window_vars["search_entry"].configure(placeholder_text=self.tr("Search sessions..."))
+        if "service_filter" in self.history_window_vars:
+            self.history_window_vars["service_filter"].configure(placeholder_text=self.tr("All Services"))
+        if "status_filter" in self.history_window_vars:
+            self.history_window_vars["status_filter"].configure(placeholder_text=self.tr("All Statuses"))
+        sort_options = {
+            "finished_desc": self.tr("Newest first"),
+            "finished_asc": self.tr("Oldest first"),
+            "service": self.tr("Service A-Z"),
+            "user": self.tr("User A-Z"),
+        }
+        self.history_window_vars["sort_options_map"] = sort_options
+        sort_filter = self.history_window_vars.get("sort_filter")
+        sort_display_var = self.history_window_vars.get("sort_display_var")
+        current_key = self.history_window_vars.get("sort_key", "finished_desc")
+        if sort_filter is not None:
+            sort_filter.configure(values=list(sort_options.values()))
+        if sort_display_var is not None:
+            sort_display_var.set(sort_options.get(current_key, next(iter(sort_options.values()))))
+        self.refresh_history_window_filters()
+        self.update_history_window_display()
 
     # Clipboard operations
     def copy_to_clipboard(self):
